@@ -1,51 +1,38 @@
 # 🏏 IPL Match Winner Prediction – Ball-by-Ball In-Play Model
 
-This project builds a real-time machine learning pipeline to predict the **outcome of an IPL match after every ball**, using historical data from the Indian Premier League (2008–2020).
-
-The model uses match dynamics like current score, overs left, wickets remaining, and venue to estimate the **win probability for the batting team**.
+This project builds a real-time machine learning pipeline to predict the **winner of an IPL match after every ball**, based on live match state. The model learns from historical IPL data (2008–2020) to estimate the **batting team's probability of winning**, using only features available up to that point in the match.
 
 ---
 
-## 📂 Dataset
+## 📦 Dataset
 
-- Source: [Kaggle IPL Complete Dataset (2008–2020)](https://www.kaggle.com/datasets/patrickb1912/ipl-complete-dataset-20082020)
+- **Source**: [Kaggle IPL Complete Dataset (2008–2020)](https://www.kaggle.com/datasets/patrickb1912/ipl-complete-dataset-20082020)
 - Files used:
-  - `matches.csv`: match-level information
-  - `deliveries.csv`: ball-by-ball data
+  - `matches.csv` – match-level metadata
+  - `deliveries.csv` – ball-by-ball match data
 
 ---
 
-## 🚀 Features Engineered
+## 🚀 Features Used
 
-| Category | Feature |
-|----------|---------|
-| Match Context | `venue`, `is_home_team`, `target_runs` |
-| Game Progress | `balls_so_far`, `balls_left`, `wickets_left` |
-| Scoring Dynamics | `total_runs_so_far`, `runs_left`, `current_run_rate`, `required_run_rate`, `run_rate_diff` |
-| Outcome | `batting_team_won` (label) |
+| Type           | Feature Name                  | Description |
+|----------------|-------------------------------|-------------|
+| **Match Info** | `venue`, `is_home_team`        | Home advantage |
+| **Score State**| `total_runs_so_far`, `runs_left`, `wickets_left` | Current game status |
+| **Progression**| `balls_so_far`, `balls_left`   | Overs completed / remaining |
+| **Performance**| `current_run_rate`, `required_run_rate`, `run_rate_diff` | Pressure metrics |
+| **Teams**      | `batting_team`, `bowling_team` | Team IDs (encoded) |
 
----
-
-## 🤖 Models Trained
-
-- ✅ **Random Forest Classifier**
-- ✅ **XGBoost Classifier**
-- ✅ **LightGBM Classifier**
-
-Each model outputs:
-- Match outcome prediction (win/lose for batting team)
-- Probability score for winning
+> All features are engineered to avoid any form of data leakage and are derived using only past and present data at each ball.
 
 ---
 
-## 📈 Performance Metrics (on sample data)
+## 🧠 Models Trained & Evaluated
 
-| Model | Accuracy | Precision (Win) | Recall (Win) | F1 Score (Win) |
-|-------|----------|------------------|--------------|----------------|
-| Random Forest | 77% | 84% | 76% | 80% |
-| XGBoost | TBD | TBD | TBD | TBD |
-| LightGBM | TBD | TBD | TBD | TBD |
-
-> ⚠️ Full evaluation is done using a stratified sample of 5,000 records for speed and comparison. Group-based CV is used to prevent match leakage.
+| Model         | Accuracy | Precision (Win) | Recall (Win) | F1 Score (Win) |
+|---------------|----------|------------------|---------------|----------------|
+| 🎯 LightGBM    | **84.4%** | **84%**           | **86%**        | **85%**         |
+| 🚀 XGBoost     | 83.7%     | 83%               | 86%            | 84%             |
+| 🌲 Random Forest | 81.0%     | 81%               | 83%            | 82%             |
 
 ---
