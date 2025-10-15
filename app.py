@@ -102,12 +102,11 @@ if 'simulation_started' in st.session_state and st.session_state.simulation_star
     col3.metric("Wickets Left", st.session_state.wickets_left)
     col4.metric("Balls Left", 120 - st.session_state.balls_so_far)
 
-    # --- NEW: Manual State Override Section ---
+    # --- Manual State Override Section ---
     with st.expander("✏️ Jump to a Specific Point in the Match"):
         st.write("Manually set the match state below and click 'Apply' to start simulating from that point.")
         
         override_cols = st.columns(3)
-        # It's more intuitive to input overs bowled than balls so far
         over_input = override_cols[0].number_input("Overs Bowled:", min_value=0, max_value=20, value=int(st.session_state.balls_so_far / 6), step=1)
         ball_input = override_cols[0].number_input("Balls in Over:", min_value=0, max_value=5, value=st.session_state.balls_so_far % 6, step=1)
         
@@ -122,7 +121,7 @@ if 'simulation_started' in st.session_state and st.session_state.simulation_star
             st.session_state.probabilities = []
             st.session_state.overs_history = []
             st.success("Match state updated! You can now proceed with the ball-by-ball simulation.")
-            st.experimental_rerun() # Forces an immediate rerun to update the metric displays
+            st.rerun() # FIXED: Forces an immediate rerun to update the metric displays
 
     st.divider()
 
@@ -172,7 +171,7 @@ if 'simulation_started' in st.session_state and st.session_state.simulation_star
             ax.plot(st.session_state.overs_history, bowling_team_probs, label=f"{st.session_state.bowling_team}", color="#D55E00", linewidth=2.5)
             ax.axhline(0.5, linestyle="--", color="grey", alpha=0.8)
             ax.set_xlabel("Overs"); ax.set_ylabel("Win Probability"); ax.set_title("Live Win Probability", fontsize=16)
-            ax.set_ylim(0, 1); ax.set_xlim(min(st.session_state.overs_history) - 1, 20); ax.grid(True, which='both', linestyle='--', linewidth=0.5)
+            ax.set_ylim(0, 1); ax.set_xlim(min(st.session_state.overs_history or [0]) - 1, 20); ax.grid(True, which='both', linestyle='--', linewidth=0.5)
             ax.legend()
             st.pyplot(fig)
             
@@ -181,7 +180,6 @@ if 'simulation_started' in st.session_state and st.session_state.simulation_star
 
 else:
     st.info("Setup a match in the sidebar and click 'Start / Reset Simulation' to begin.")
-
 
 
 
