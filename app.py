@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import pickle
 import numpy as np
-import matplotlib.pyplot as plt
 
 # --- Load All Model Artifacts ---
 @st.cache_resource
@@ -27,11 +26,6 @@ def load_match_data():
     """Loads the matches.csv for UI elements."""
     try:
         matches_df = pd.read_csv("matches.csv")
-        # Standardize names for a cleaner UI
-        team_map = {'Delhi Daredevils': 'Delhi Capitals', 'Kings XI Punjab': 'Punjab Kings', 'Deccan Chargers': 'Sunrisers Hyderabad', 'Rising Pune Supergiant': 'Rising Pune Supergiants', 'Royal Challengers Bengaluru': 'Royal Challengers Bangalore'}
-        matches_df['team1'] = matches_df['team1'].replace(team_map)
-        matches_df['team2'] = matches_df['team2'].replace(team_map)
-        matches_df['city'] = matches_df['city'].replace({'Bangalore': 'Bengaluru'})
         return matches_df
     except FileNotFoundError:
         st.error("Matches file 'matches.csv' not found.")
@@ -48,7 +42,6 @@ if not all([model, team_encoder, venue_encoder, matches_df is not None]):
 all_teams = sorted(team_encoder.classes_)
 all_venues = sorted(venue_encoder.classes_)
 all_cities = sorted(matches_df['city'].dropna().unique())
-city_to_home_team = {row['city']: row['team1'] for _, row in matches_df.dropna(subset=['city', 'team1']).iterrows()}
 
 def predict_probability(state_df):
     """Takes a DataFrame and returns the win probability."""
@@ -58,7 +51,7 @@ def predict_probability(state_df):
 # --- Streamlit UI ---
 st.set_page_config(page_title="IPL Live Win Predictor", page_icon="🏏", layout="wide")
 st.title("🏏 IPL Live Match Win Predictor")
-st.markdown("Simulate a match ball-by-ball or jump to any point in the chase.")
+st.markdown("Simulate a match ball-by-ball and see the win probability change in real-time.")
 
 with st.sidebar:
     st.header("⚙️ Match Setup")
@@ -81,13 +74,11 @@ with st.sidebar:
         # Store the STRING names for display
         st.session_state.batting_team_name = batting_team
         st.session_state.bowling_team_name = bowling_team
-        st.session_state.is_home_team = 1 if batting_team == city_to_home_team.get(selected_city) else 0
         
         # "Translate" the STRING names into NUMBERS for the model
         st.session_state.batting_team_enc = int(team_encoder.transform([batting_team])[0])
         st.session_state.bowling_team_enc = int(team_encoder.transform([bowling_team])[0])
         st.session_state.venue_enc = int(venue_encoder.transform([venue])[0])
-
 
 if 'simulation_started' in st.session_state:
     st.header("Current Match State")
@@ -107,15 +98,12 @@ if 'simulation_started' in st.session_state:
         'batting_team': st.session_state.batting_team_enc,
         'bowling_team': st.session_state.bowling_team_enc,
         'venue': st.session_state.venue_enc,
-        'balls_so_far': st.session_state.balls_so_far,
-        'balls_left': balls_left,
+        'wickets_left': st.session_state.wickets_left,
         'total_runs_so_far': runs_so_far,
         'runs_left': st.session_state.runs_left,
+        'balls_left': balls_left,
         'current_run_rate': current_rr,
-        'required_run_rate': required_rr,
-        'wickets_left': st.session_state.wickets_left,
-        'run_rate_diff': current_rr - required_rr,
-        'is_home_team': st.session_state.is_home_team,
+        'required_run_rate': required_rr
     }
     
     features_df = pd.DataFrame([features])
