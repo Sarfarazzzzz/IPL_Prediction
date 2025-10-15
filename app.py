@@ -53,30 +53,45 @@ city_to_home_team = {row['city']: row['team1'] for index, row in matches_df.drop
 
 # --- UPDATED: Prediction Function ---
 def predict_probability(match_state):
-    # This now expects a dictionary and will construct the DataFrame internally
-    # with the new feature columns.
-    
     # Create a DataFrame from the state
     df = pd.DataFrame([match_state])
     
-    # Calculate the new features
+    # --- Feature Creation (Identical to Notebook) ---
+    
+    # 1. Calculate the 'over' to determine the phase
     over = df['balls_so_far'].iloc[0] / 6
+    
+    # 2. Create all phase columns temporarily
+    df['phase_Powerplay'] = 1 if over <= 6 else 0
     df['phase_Middle'] = 1 if 6 < over <= 15 else 0
     df['phase_Death'] = 1 if over > 15 else 0
-    df['wicket_pressure'] = df['required_run_rate'] * (11 - df['wickets_left'])
     
-    # Ensure the column order matches the model's training order
-    feature_order = [
+    # 3. Create the wicket_pressure feature
+    # Handle division by zero for required_run_rate
+    if df['required_run_rate'].iloc[0] == 0 and df['runs_left'].iloc[0] > 0:
+        # A high value to signify pressure when no balls are left but runs are needed
+        df['wicket_pressure'] = 100 
+    else:
+        df['wicket_pressure'] = df['required_run_rate'] * (11 - df['wickets_left'])
+
+    # --- Feature Selection (The CRUCIAL Step) ---
+    # 4. Define the EXACT list of features the model was trained on
+    final_feature_order = [
         'batting_team', 'bowling_team', 'venue',
         'balls_so_far', 'balls_left',
         'total_runs_so_far', 'runs_left',
         'current_run_rate', 'required_run_rate',
         'wickets_left', 'run_rate_diff', 'is_home_team',
-        'phase_Middle', 'phase_Death', 'wicket_pressure'
+        'phase_Middle',  # Note: phase_Powerplay is NOT in this list
+        'phase_Death',
+        'wicket_pressure'
     ]
-    df = df[feature_order]
     
-    return model.predict_proba(df.values)[0][1]
+    # 5. Select only those features in that specific order
+    df_final = df[final_feature_order]
+    
+    # 6. Convert to NumPy array for maximum compatibility
+    return model.predict_proba(df_final.values)[0][1]
 
 # --- Streamlit UI ---
 st.set_page_config(page_title="IPL Live Win Predictor", page_icon="🏏", layout="wide")
