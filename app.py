@@ -4,36 +4,89 @@ import pickle
 import matplotlib.pyplot as plt
 import numpy as np
 
-# Load the pre-trained model
-try:
-    with open("lgb_model.pkl", "rb") as f:
-        model = pickle.load(f)
-except FileNotFoundError:
-    st.error("Model file 'lgb_model.pkl' not found. Please make sure it's in the same directory.")
-    st.stop()
+# --- Caching Functions ---
+@st.cache_resource
+def load_model():
+    """Loads the pre-trained model from the .pkl file."""
+    try:
+        with open("lgb_model.pkl", "rb") as f:
+            model = pickle.load(f)
+        return model
+    except FileNotFoundError:
+        st.error("Model file 'lgb_model.pkl' not found. Please make sure it's in the same directory.")
+        return None
 
-# Load match data to get team and venue names
-try:
-    matches_df = pd.read_csv("matches.csv")
-except FileNotFoundError:
-    st.error("Matches file 'matches.csv' not found. Please make sure it's in the same directory.")
+@st.cache_data
+def load_data():
+    """Loads and cleans the matches.csv data, then caches it."""
+    try:
+        matches_df = pd.read_csv("matches.csv")
+    except FileNotFoundError:
+        st.error("Matches file 'matches.csv' not found. Please make sure it's in the same directory.")
+        return None
+
+    # --- Data Cleaning and Standardization ---
+
+    # 1. Team Name Standardization
+    team_name_mapping = {
+        'Delhi Daredevils': 'Delhi Capitals',
+        'Kings XI Punjab': 'Punjab Kings',
+        'Deccan Chargers': 'Sunrisers Hyderabad',
+        'Rising Pune Supergiant': 'Rising Pune Supergiants',
+        'Royal Challengers Bengaluru': 'Royal Challengers Bangalore'
+    }
+    team_cols = ['team1', 'team2', 'toss_winner', 'winner']
+    for col in team_cols:
+        matches_df[col] = matches_df[col].replace(team_name_mapping)
+
+    # 2. Venue Name Standardization
+    venue_mapping = {
+        'M.Chinnaswamy Stadium': 'M Chinnaswamy Stadium',
+        'M Chinnaswamy Stadium, Bengaluru': 'M Chinnaswamy Stadium',
+        'Punjab Cricket Association Stadium, Mohali': 'Punjab Cricket Association IS Bindra Stadium',
+        'Punjab Cricket Association IS Bindra Stadium, Mohali': 'Punjab Cricket Association IS Bindra Stadium',
+        'Feroz Shah Kotla': 'Arun Jaitley Stadium',
+        'Arun Jaitley Stadium, Delhi': 'Arun Jaitley Stadium',
+        'Wankhede Stadium, Mumbai': 'Wankhede Stadium',
+        'Brabourne Stadium, Mumbai': 'Brabourne Stadium',
+        'Dr DY Patil Sports Academy, Mumbai': 'Dr DY Patil Sports Academy',
+        'Eden Gardens, Kolkata': 'Eden Gardens',
+        'Sawai Mansingh Stadium, Jaipur': 'Sawai Mansingh Stadium',
+        'Rajiv Gandhi International Stadium': 'Rajiv Gandhi International Stadium, Uppal',
+        'MA Chidambaram Stadium, Chepauk': 'MA Chidambaram Stadium',
+        'MA Chidambaram Stadium, Chepauk, Chennai': 'MA Chidambaram Stadium',
+        'Sardar Patel Stadium, Motera': 'Narendra Modi Stadium',
+        'Narendra Modi Stadium, Ahmedabad': 'Narendra Modi Stadium',
+    }
+    matches_df['venue'] = matches_df['venue'].replace(venue_mapping)
+
+    # 3. City Name Standardization
+    city_mapping = {
+        'Bangalore': 'Bengaluru'
+    }
+    matches_df['city'] = matches_df['city'].replace(city_mapping)
+
+    return matches_df
+
+# --- Load Assets ---
+model = load_model()
+matches_df = load_data()
+
+if model is None or matches_df is None:
     st.stop()
 
 # --- Pre-computation and Mappings ---
-# These computations will now only run once after the data is loaded.
-all_teams = sorted(matches_df['team1'].unique())
+all_teams = sorted(matches_df['team1'].dropna().unique())
 team_encoding = {team: i for i, team in enumerate(all_teams)}
 
-all_venues = sorted(matches_df['venue'].unique())
+all_venues = sorted(matches_df['venue'].dropna().unique())
 venue_encoding = {venue: i for i, venue in enumerate(all_venues)}
 
 city_to_home_team = {}
-# Drop rows where city is NaN before creating the home team mapping
-matches_df_cleaned = matches_df.dropna(subset=['city'])
+matches_df_cleaned = matches_df.dropna(subset=['city', 'team1'])
 for index, row in matches_df_cleaned.iterrows():
     if row['city'] not in city_to_home_team:
         city_to_home_team[row['city']] = row['team1']
-
 
 # ------------------------------
 # Streamlit UI
@@ -48,11 +101,10 @@ st.sidebar.header("⚙️ Match Settings")
 batting_team = st.sidebar.selectbox("Select Batting Team", all_teams)
 bowling_team = st.sidebar.selectbox("Select Bowling Team", [t for t in all_teams if t != batting_team])
 
-# FIX: Drop NaN values from the city column before sorting and displaying
 sorted_cities = sorted(matches_df['city'].dropna().unique())
 selected_city = st.sidebar.selectbox("Select City", sorted_cities)
 
-possible_venues = matches_df[matches_df['city'] == selected_city]['venue'].unique()
+possible_venues = sorted(matches_df[matches_df['city'] == selected_city]['venue'].unique())
 venue = st.sidebar.selectbox("Select Venue", possible_venues)
 
 target_runs = st.sidebar.number_input("Target Runs to Win", min_value=1, max_value=400, value=150)
@@ -61,11 +113,10 @@ target_runs = st.sidebar.number_input("Target Runs to Win", min_value=1, max_val
 # Prediction Logic
 # ------------------------------
 
-if st.sidebar.button(" Simulate and Predict"):
+if st.sidebar.button("Simulate and Predict"):
     if batting_team == bowling_team:
         st.error("Batting and Bowling teams cannot be the same.")
     else:
-        # --- Encode Categorical Features ---
         try:
             batting_team_enc = team_encoding[batting_team]
             bowling_team_enc = team_encoding[bowling_team]
@@ -74,40 +125,29 @@ if st.sidebar.button(" Simulate and Predict"):
             st.error(f"Encoding error: {e}. One of the selected teams or venue might not be in the training data.")
             st.stop()
 
-        # Determine if the batting team is the home team
         home_team = city_to_home_team.get(selected_city)
         is_home_team = 1 if batting_team == home_team else 0
-
-        # --- Ball-by-Ball Simulation ---
-        balls = np.arange(1, 121) # 20 overs = 120 balls
+        
+        balls = np.arange(1, 121)
         probabilities = []
-
-        # Initial state for the simulation (start of 2nd innings)
+        
         wickets_left = 10
-        runs_left = target_runs
-
+        
         for ball in balls:
-            # At each ball, we create the feature vector for the model
             balls_so_far = ball
             balls_left = 120 - balls_so_far
-
-            # Simple assumption: runs are scored at a steady rate for the simulation.
-            # In a real scenario, you'd update this with actual ball-by-ball data.
-            # For this simulation, let's assume a run rate of 8 per over.
+            
             runs_so_far = int((balls_so_far / 6) * 8)
             runs_left = target_runs - runs_so_far
 
-            # If target is reached, win probability is 1
             if runs_left <= 0:
                 probabilities.append(1.0)
                 continue
 
-            # Calculate run rates
             current_rr = (runs_so_far * 6 / balls_so_far) if balls_so_far > 0 else 0
-            required_rr = (runs_left * 6 / balls_left) if balls_left > 0 else 100 # High value if no balls left
+            required_rr = (runs_left * 6 / balls_left) if balls_left > 0 else 100
             run_rate_diff = current_rr - required_rr
 
-            # Create the feature DataFrame for prediction
             features = pd.DataFrame([[
                 batting_team_enc, bowling_team_enc, venue_enc,
                 balls_so_far, balls_left,
@@ -122,28 +162,22 @@ if st.sidebar.button(" Simulate and Predict"):
                 'wickets_left', 'run_rate_diff', 'is_home_team'
             ])
 
-            # Predict probability
             prob = model.predict_proba(features)[0][1]
             probabilities.append(prob)
 
-        # ------------------------------
-        # Display Results
-        # ------------------------------
         st.header("Prediction Results")
-
+        
         col1, col2 = st.columns(2)
 
         with col1:
             st.subheader(f"Win Probability for {batting_team}")
-            # Use matplotlib for better control over the plot
             fig, ax = plt.subplots(figsize=(10, 6))
             ax.plot(balls / 6, probabilities, label=f"{batting_team} Win Probability", color="#0072B2", linewidth=2)
             ax.axhline(0.5, linestyle="--", color="red", alpha=0.7, label="50% Mark")
-
-            # Fill area to show win/loss zones
+            
             ax.fill_between(balls / 6, probabilities, 0.5, where=(np.array(probabilities) >= 0.5), facecolor='green', alpha=0.2)
             ax.fill_between(balls / 6, probabilities, 0.5, where=(np.array(probabilities) < 0.5), facecolor='red', alpha=0.2)
-
+            
             ax.set_xlabel("Overs")
             ax.set_ylabel("Win Probability")
             ax.set_title(f"Win Probability Simulation: {batting_team} vs {bowling_team}", fontsize=14)
@@ -151,13 +185,13 @@ if st.sidebar.button(" Simulate and Predict"):
             ax.set_xlim(0, 20)
             ax.grid(True, which='both', linestyle='--', linewidth=0.5)
             ax.legend()
-
+            
             st.pyplot(fig)
-
+        
         with col2:
             st.subheader("Final Prediction")
             final_prob = probabilities[-1] * 100
-
+            
             st.metric(label=f"**{batting_team}'s Win Probability**", value=f"{final_prob:.2f}%")
 
             if final_prob > 55:
@@ -166,8 +200,8 @@ if st.sidebar.button(" Simulate and Predict"):
                 st.error(f"**Conclusion:** {bowling_team} has the upper hand and is likely to win.")
             else:
                 st.warning("**Conclusion:** The match is too close to call. It could go either way!")
-
-            st.info("This simulation assumes a consistent run rate and no wickets lost. The actual probability will change dynamically based on real-time match events.")
+            
+            st.info("This simulation assumes a consistent run rate and no wickets lost.")
 
 
 
