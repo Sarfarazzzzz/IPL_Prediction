@@ -20,20 +20,20 @@ except FileNotFoundError:
     st.stop()
 
 # --- Pre-computation and Mappings ---
-# Create fixed encodings for teams and venues based on the dataset
-# This is crucial because the model was trained with specific numerical encodings.
+# These computations will now only run once after the data is loaded.
 all_teams = sorted(matches_df['team1'].unique())
 team_encoding = {team: i for i, team in enumerate(all_teams)}
 
 all_venues = sorted(matches_df['venue'].unique())
 venue_encoding = {venue: i for i, venue in enumerate(all_venues)}
 
-# Map city to home team for the 'is_home_team' feature
-# This creates a dictionary like {'Bangalore': 'Royal Challengers Bangalore', ...}
 city_to_home_team = {}
-for index, row in matches_df.iterrows():
+# Drop rows where city is NaN before creating the home team mapping
+matches_df_cleaned = matches_df.dropna(subset=['city'])
+for index, row in matches_df_cleaned.iterrows():
     if row['city'] not in city_to_home_team:
-        city_to_home_team[row['city']] = row['team1'] # Assuming team1 is the home team
+        city_to_home_team[row['city']] = row['team1']
+
 
 # ------------------------------
 # Streamlit UI
@@ -47,10 +47,11 @@ st.sidebar.header("⚙️ Match Settings")
 
 batting_team = st.sidebar.selectbox("Select Batting Team", all_teams)
 bowling_team = st.sidebar.selectbox("Select Bowling Team", [t for t in all_teams if t != batting_team])
-selected_city = st.sidebar.selectbox("Select City", sorted(matches_df['city'].unique()))
 
-# Find the corresponding venue for the selected city
-# Some cities have multiple venues, so we allow the user to choose if needed
+# FIX: Drop NaN values from the city column before sorting and displaying
+sorted_cities = sorted(matches_df['city'].dropna().unique())
+selected_city = st.sidebar.selectbox("Select City", sorted_cities)
+
 possible_venues = matches_df[matches_df['city'] == selected_city]['venue'].unique()
 venue = st.sidebar.selectbox("Select Venue", possible_venues)
 
