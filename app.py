@@ -76,7 +76,7 @@ def predict_probability(match_state):
     ]
     df = df[feature_order]
     
-    return model.predict_proba(df)[0][1]
+    return model.predict_proba(df.values)[0][1]
 
 # --- Streamlit UI ---
 st.set_page_config(page_title="IPL Live Win Predictor", page_icon="🏏", layout="wide")
