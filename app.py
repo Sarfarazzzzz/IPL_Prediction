@@ -43,24 +43,23 @@ all_teams = sorted(team_encoder.classes_)
 all_venues = sorted(venue_encoder.classes_)
 all_cities = sorted(matches_df['city'].dropna().unique())
 
-def predict_probability(state_df):
-    """Takes a DataFrame and returns the win probability."""
+def predict_probability(features_df):
+    """Takes a DataFrame with the correct features and returns the win probability."""
     # The model expects a NumPy array, so we provide one
-    return model.predict_proba(state_df.values)[0][1]
+    return model.predict_proba(features_df.values)[0][1]
 
 # --- Streamlit UI ---
 st.set_page_config(page_title="IPL Live Win Predictor", page_icon="🏏", layout="wide")
-st.title("🏏 IPL Live Match Win Predictor")
-st.markdown("Simulate a match ball-by-ball and see the win probability change in real-time.")
+st.title("🏏 IPL Live Win Predictor")
 
 with st.sidebar:
     st.header("⚙️ Match Setup")
     # The user interacts with the list of STRING names
-    batting_team = st.selectbox("Select Batting Team", all_teams)
-    bowling_team = st.selectbox("Select Bowling Team", [t for t in all_teams if t != batting_team])
+    batting_team_name = st.selectbox("Select Batting Team", all_teams)
+    bowling_team_name = st.selectbox("Select Bowling Team", [t for t in all_teams if t != batting_team_name])
     selected_city = st.selectbox("Select City", all_cities)
     possible_venues = sorted(matches_df[matches_df['city'] == selected_city]['venue'].unique())
-    venue = st.selectbox("Select Venue", possible_venues if possible_venues else all_venues)
+    venue_name = st.selectbox("Select Venue", possible_venues if possible_venues else all_venues)
     target = st.number_input("Target Runs to Win", min_value=1, max_value=400, value=180)
 
     if st.button("Start / Reset Simulation", type="primary"):
@@ -70,50 +69,54 @@ with st.sidebar:
         st.session_state.runs_left = target
         st.session_state.wickets_left = 10
         st.session_state.balls_so_far = 0
-        
-        # Store the STRING names for display
-        st.session_state.batting_team_name = batting_team
-        st.session_state.bowling_team_name = bowling_team
+        st.session_state.batting_team_name = batting_team_name
         
         # "Translate" the STRING names into NUMBERS for the model
-        st.session_state.batting_team_enc = int(team_encoder.transform([batting_team])[0])
-        st.session_state.bowling_team_enc = int(team_encoder.transform([bowling_team])[0])
-        st.session_state.venue_enc = int(venue_encoder.transform([venue])[0])
+        st.session_state.batting_team_enc = int(team_encoder.transform([batting_team_name])[0])
+        st.session_state.bowling_team_enc = int(team_encoder.transform([bowling_team_name])[0])
+        st.session_state.venue_enc = int(venue_encoder.transform([venue_name])[0])
+
 
 if 'simulation_started' in st.session_state:
-    st.header("Current Match State")
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Target", st.session_state.target)
-    col2.metric("Runs Left", st.session_state.runs_left)
-    col3.metric("Wickets Left", st.session_state.wickets_left)
-    col4.metric("Balls Left", 120 - st.session_state.balls_so_far)
-
+    st.header(f"Simulating Chase: {st.session_state.batting_team_name}")
+    
+    # Allow user to jump to a specific point in the match
+    st.subheader("Set Match State")
+    cols = st.columns(3)
+    runs_left = cols[0].number_input("Runs Left:", min_value=1, max_value=st.session_state.target, value=st.session_state.runs_left)
+    wickets_left = cols[1].number_input("Wickets Left:", min_value=0, max_value=10, value=st.session_state.wickets_left)
+    balls_so_far = cols[2].number_input("Balls Bowled:", min_value=0, max_value=119, value=st.session_state.balls_so_far)
+    
+    # Update session state if user changes these values
+    st.session_state.runs_left = runs_left
+    st.session_state.wickets_left = wickets_left
+    st.session_state.balls_so_far = balls_so_far
+    
+    # Calculate derived features
     runs_so_far = st.session_state.target - st.session_state.runs_left
     balls_left = 120 - st.session_state.balls_so_far
     current_rr = (runs_so_far * 6 / st.session_state.balls_so_far) if st.session_state.balls_so_far > 0 else 0
     required_rr = (st.session_state.runs_left * 6 / balls_left) if balls_left > 0 else 100
 
     # This dictionary defines the exact feature set for the model using NUMBERS
-    # IMPORTANT: The order of features must match the training notebook
     features = {
-        'batting_team': st.session_state.batting_team_enc,
-        'bowling_team': st.session_state.bowling_team_enc,
-        'venue': st.session_state.venue_enc,
-        'wickets_left': st.session_state.wickets_left,
-        'total_runs_so_far': runs_so_far,
+        'batting_team_enc': st.session_state.batting_team_enc,
+        'bowling_team_enc': st.session_state.bowling_team_enc,
+        'venue_enc': st.session_state.venue_enc,
         'runs_left': st.session_state.runs_left,
         'balls_left': balls_left,
+        'wickets_left': st.session_state.wickets_left,
+        'target_runs': st.session_state.target,
         'current_run_rate': current_rr,
-        'required_run_rate': required_rr
+        'required_run_rate': required_rr,
     }
     
     features_df = pd.DataFrame([features])
     
     # Ensure DataFrame columns are in the correct order before prediction
-    # This must match the order from your notebook's X DataFrame
     training_columns = [
-        'batting_team', 'bowling_team', 'venue', 'wickets_left', 
-        'total_runs_so_far', 'runs_left', 'balls_left', 
+        'batting_team_enc', 'bowling_team_enc', 'venue_enc',
+        'runs_left', 'balls_left', 'wickets_left', 'target_runs',
         'current_run_rate', 'required_run_rate'
     ]
     features_df = features_df[training_columns]
@@ -121,21 +124,7 @@ if 'simulation_started' in st.session_state:
     current_prob = predict_probability(features_df)
     
     # Display the result using the saved STRING name
-    st.metric(label=f"**Current Win Probability for {st.session_state.batting_team_name}**", value=f"{current_prob * 100:.2f}%")
+    st.header(f"Win Probability: {current_prob * 100:.2f}%")
 
-    st.divider()
-    st.header("Ball-by-Ball Input")
-    runs_scored = st.selectbox("Runs on this ball:", (0, 1, 2, 3, 4, 6))
-    is_wicket = st.checkbox("Wicket on this ball?")
-
-    if st.button("Next Ball", type="secondary"):
-        if st.session_state.wickets_left <= 0 or st.session_state.runs_left <= 0 or st.session_state.balls_so_far >= 120:
-            st.warning("Match is over! Please reset the simulation to start a new one.")
-        else:
-            st.session_state.runs_left -= runs_scored
-            st.session_state.balls_so_far += 1
-            if is_wicket:
-                st.session_state.wickets_left -= 1
-            st.rerun()
 else:
     st.info("Setup a match in the sidebar and click 'Start / Reset Simulation' to begin.")
