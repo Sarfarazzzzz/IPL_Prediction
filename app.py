@@ -102,26 +102,45 @@ if 'simulation_started' in st.session_state and st.session_state.simulation_star
     col3.metric("Wickets Left", st.session_state.wickets_left)
     col4.metric("Balls Left", 120 - st.session_state.balls_so_far)
 
-    # --- Manual State Override Section ---
     with st.expander("✏️ Jump to a Specific Point in the Match"):
         st.write("Manually set the match state below and click 'Apply' to start simulating from that point.")
         
         override_cols = st.columns(3)
         over_input = override_cols[0].number_input("Overs Bowled:", min_value=0, max_value=20, value=int(st.session_state.balls_so_far / 6), step=1)
         ball_input = override_cols[0].number_input("Balls in Over:", min_value=0, max_value=5, value=st.session_state.balls_so_far % 6, step=1)
-        
         runs_left_input = override_cols[1].number_input("Set Runs Left:", min_value=1, max_value=st.session_state.target, value=st.session_state.runs_left)
         wickets_left_input = override_cols[2].number_input("Set Wickets Left:", min_value=0, max_value=10, value=st.session_state.wickets_left)
 
         if st.button("Apply Custom State"):
+            # Update state with user input
             st.session_state.balls_so_far = (over_input * 6) + ball_input
             st.session_state.runs_left = runs_left_input
             st.session_state.wickets_left = wickets_left_input
-            # Clear plot history to start fresh from this new point
-            st.session_state.probabilities = []
-            st.session_state.overs_history = []
-            st.success("Match state updated! You can now proceed with the ball-by-ball simulation.")
-            st.rerun() # FIXED: Forces an immediate rerun to update the metric displays
+            
+            # --- NEW: Calculate and display initial probability ---
+            # 1. Calculate derived features for the new state
+            balls_left = 120 - st.session_state.balls_so_far
+            runs_so_far = st.session_state.target - st.session_state.runs_left
+            current_rr = (runs_so_far * 6 / st.session_state.balls_so_far) if st.session_state.balls_so_far > 0 else 0
+            required_rr = (st.session_state.runs_left * 6 / balls_left) if balls_left > 0 else 100
+            
+            # 2. Create the state dictionary
+            initial_state = {
+                'batting_team': st.session_state.batting_team_enc, 'bowling_team': st.session_state.bowling_team_enc,
+                'venue': st.session_state.venue_enc, 'balls_so_far': st.session_state.balls_so_far,
+                'balls_left': balls_left, 'total_runs_so_far': runs_so_far,
+                'runs_left': st.session_state.runs_left, 'current_run_rate': current_rr,
+                'required_run_rate': required_rr, 'wickets_left': st.session_state.wickets_left,
+                'run_rate_diff': current_rr - required_rr, 'is_home_team': st.session_state.is_home_team
+            }
+            
+            # 3. Predict and store the result as the first point in the plot
+            initial_prob = predict_probability(initial_state)
+            st.session_state.probabilities = [initial_prob]
+            st.session_state.overs_history = [st.session_state.balls_so_far / 6]
+
+            st.success("Match state updated! Initial probability calculated.")
+            st.rerun()
 
     st.divider()
 
@@ -159,16 +178,16 @@ if 'simulation_started' in st.session_state and st.session_state.simulation_star
                 win_prob = predict_probability(current_state)
                 st.session_state.probabilities.append(win_prob)
                 st.session_state.overs_history.append(st.session_state.balls_so_far / 6)
+                st.rerun() # Rerun to update plot immediately
 
     with plot_col:
         st.subheader("Win Probability Chart")
         if st.session_state.probabilities:
-            # Plotting logic remains the same
             fig, ax = plt.subplots(figsize=(10, 6))
             batting_team_probs = np.array(st.session_state.probabilities)
             bowling_team_probs = 1 - batting_team_probs
-            ax.plot(st.session_state.overs_history, batting_team_probs, label=f"{st.session_state.batting_team}", color="#0072B2", linewidth=2.5)
-            ax.plot(st.session_state.overs_history, bowling_team_probs, label=f"{st.session_state.bowling_team}", color="#D55E00", linewidth=2.5)
+            ax.plot(st.session_state.overs_history, batting_team_probs, label=f"{st.session_state.batting_team}", color="#0072B2", linewidth=2.5, marker='o', markersize=5)
+            ax.plot(st.session_state.overs_history, bowling_team_probs, label=f"{st.session_state.bowling_team}", color="#D55E00", linewidth=2.5, marker='o', markersize=5)
             ax.axhline(0.5, linestyle="--", color="grey", alpha=0.8)
             ax.set_xlabel("Overs"); ax.set_ylabel("Win Probability"); ax.set_title("Live Win Probability", fontsize=16)
             ax.set_ylim(0, 1); ax.set_xlim(min(st.session_state.overs_history or [0]) - 1, 20); ax.grid(True, which='both', linestyle='--', linewidth=0.5)
@@ -180,9 +199,6 @@ if 'simulation_started' in st.session_state and st.session_state.simulation_star
 
 else:
     st.info("Setup a match in the sidebar and click 'Start / Reset Simulation' to begin.")
-
-
-
 
 
 
