@@ -44,6 +44,7 @@ if not all([model, team_encoder, venue_encoder, matches_df is not None]):
     st.stop()
 
 # --- Prepare UI lists from the loaded artifacts and data ---
+# This uses the STRING names from the encoder for the user to see
 all_teams = sorted(team_encoder.classes_)
 all_venues = sorted(venue_encoder.classes_)
 all_cities = sorted(matches_df['city'].dropna().unique())
@@ -51,6 +52,7 @@ city_to_home_team = {row['city']: row['team1'] for _, row in matches_df.dropna(s
 
 def predict_probability(state_df):
     """Takes a DataFrame and returns the win probability."""
+    # The model expects a NumPy array, so we provide one
     return model.predict_proba(state_df.values)[0][1]
 
 # --- Streamlit UI ---
@@ -60,6 +62,7 @@ st.markdown("Simulate a match ball-by-ball or jump to any point in the chase.")
 
 with st.sidebar:
     st.header("⚙️ Match Setup")
+    # The user interacts with the list of STRING names
     batting_team = st.selectbox("Select Batting Team", all_teams)
     bowling_team = st.selectbox("Select Bowling Team", [t for t in all_teams if t != batting_team])
     selected_city = st.selectbox("Select City", all_cities)
@@ -74,10 +77,13 @@ with st.sidebar:
         st.session_state.runs_left = target
         st.session_state.wickets_left = 10
         st.session_state.balls_so_far = 0
+        
+        # Store the STRING names for display
         st.session_state.batting_team_name = batting_team
         st.session_state.bowling_team_name = bowling_team
         st.session_state.is_home_team = 1 if batting_team == city_to_home_team.get(selected_city) else 0
-        # Use the loaded encoders to get the correct numerical ID
+        
+        # "Translate" the STRING names into NUMBERS for the model
         st.session_state.batting_team_enc = int(team_encoder.transform([batting_team])[0])
         st.session_state.bowling_team_enc = int(team_encoder.transform([bowling_team])[0])
         st.session_state.venue_enc = int(venue_encoder.transform([venue])[0])
@@ -96,7 +102,7 @@ if 'simulation_started' in st.session_state:
     current_rr = (runs_so_far * 6 / st.session_state.balls_so_far) if st.session_state.balls_so_far > 0 else 0
     required_rr = (st.session_state.runs_left * 6 / balls_left) if balls_left > 0 else 100
 
-    # This dictionary defines the exact feature set for the model
+    # This dictionary defines the exact feature set for the model using NUMBERS
     features = {
         'batting_team': st.session_state.batting_team_enc,
         'bowling_team': st.session_state.bowling_team_enc,
@@ -114,6 +120,8 @@ if 'simulation_started' in st.session_state:
     
     features_df = pd.DataFrame([features])
     current_prob = predict_probability(features_df)
+    
+    # Display the result using the saved STRING name
     st.metric(label=f"**Current Win Probability for {st.session_state.batting_team_name}**", value=f"{current_prob * 100:.2f}%")
 
     st.divider()
