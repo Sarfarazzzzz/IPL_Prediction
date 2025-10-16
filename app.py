@@ -125,33 +125,32 @@ with st.sidebar:
         st.session_state.batting_team = batting_team
         st.session_state.bowling_team = bowling_team
         
+        # <<< FIX: Store UI selections in session_state for consistency >>>
+        st.session_state.venue = venue
+        st.session_state.selected_city = selected_city
+        
         # --- Smart Initial Probability with Team Strength Adjustment ---
-        # 1. Get Baseline Probability
         bins = [0, 140, 160, 180, 200, 220, 300]
         labels = ['<140', '140-159', '160-179', '180-199', '200-219', '>220']
         target_bin = pd.cut([target_runs], bins=bins, labels=labels)[0]
         
         try:
             prob_row = initial_prob_lookup[
-                (initial_prob_lookup['venue'] == venue) &
+                (initial_prob_lookup['venue'] == st.session_state.venue) &
                 (initial_prob_lookup['target_bin'] == target_bin)
             ]
             baseline_prob = prob_row['chase_win'].values[0]
         except (IndexError, KeyError):
-            baseline_prob = 0.50 # Fallback
+            baseline_prob = 0.50
         
-        # 2. Get Team Strength Scores and Apply Adjustment
         try:
             batting_strength = team_strength.loc[team_strength['team'] == batting_team, 'win_rate'].values[0]
             bowling_strength = team_strength.loc[team_strength['team'] == bowling_team, 'win_rate'].values[0]
-            
             strength_diff = batting_strength - bowling_strength
-            adjustment = strength_diff / 2 # A gentle adjustment factor
-
-            initial_prob = np.clip(baseline_prob + adjustment, 0.05, 0.95) # Clip to avoid extremes
-            
+            adjustment = strength_diff / 2
+            initial_prob = np.clip(baseline_prob + adjustment, 0.05, 0.95)
         except IndexError:
-            initial_prob = baseline_prob # Fallback if a team isn't in the strength file
+            initial_prob = baseline_prob
         
         st.session_state.probabilities = [initial_prob]
         st.session_state.overs_history = [0.0]
@@ -184,7 +183,7 @@ if 'simulation_started' in st.session_state and st.session_state.simulation_star
             initial_state_df = pd.DataFrame([{
                 'batting_team': team_encoding.get(st.session_state.batting_team),
                 'bowling_team': team_encoding.get(st.session_state.bowling_team),
-                'venue': venue_encoding.get(venue),
+                'venue': venue_encoding.get(st.session_state.venue),
                 'balls_so_far': st.session_state.balls_so_far,
                 'balls_left': balls_left,
                 'total_runs_so_far': runs_so_far,
@@ -193,7 +192,7 @@ if 'simulation_started' in st.session_state and st.session_state.simulation_star
                 'required_run_rate': required_rr,
                 'wickets_left': st.session_state.wickets_left,
                 'run_rate_diff': current_rr - required_rr,
-                'is_home_team': 1 if st.session_state.batting_team == home_team_map.get(selected_city) else 0
+                'is_home_team': 1 if st.session_state.batting_team == home_team_map.get(st.session_state.selected_city) else 0
             }])
             
             initial_prob = predict_probability(initial_state_df)
@@ -226,7 +225,7 @@ if 'simulation_started' in st.session_state and st.session_state.simulation_star
                 current_state_df = pd.DataFrame([{
                     'batting_team': team_encoding.get(st.session_state.batting_team),
                     'bowling_team': team_encoding.get(st.session_state.bowling_team),
-                    'venue': venue_encoding.get(venue),
+                    'venue': venue_encoding.get(st.session_state.venue),
                     'balls_so_far': st.session_state.balls_so_far,
                     'balls_left': balls_left,
                     'total_runs_so_far': runs_so_far,
@@ -235,7 +234,7 @@ if 'simulation_started' in st.session_state and st.session_state.simulation_star
                     'required_run_rate': required_rr,
                     'wickets_left': st.session_state.wickets_left,
                     'run_rate_diff': current_rr - required_rr,
-                    'is_home_team': 1 if st.session_state.batting_team == home_team_map.get(selected_city) else 0
+                    'is_home_team': 1 if st.session_state.batting_team == home_team_map.get(st.session_state.selected_city) else 0
                 }])
                 
                 win_prob = predict_probability(current_state_df)
