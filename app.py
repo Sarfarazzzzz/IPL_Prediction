@@ -31,30 +31,18 @@ def load_data():
         'Deccan Chargers': 'Sunrisers Hyderabad', 'Rising Pune Supergiant': 'Rising Pune Supergiants',
         'Royal Challengers Bengaluru': 'Royal Challengers Bangalore'
     }
-    
-    # --- FIX: Expanded venue mapping to consolidate duplicates ---
     venue_mapping = {
-        'M.Chinnaswamy Stadium': 'M Chinnaswamy Stadium',
-        'M Chinnaswamy Stadium, Bengaluru': 'M Chinnaswamy Stadium',
-        'Punjab Cricket Association Stadium, Mohali': 'Punjab Cricket Association IS Bindra Stadium',
-        'Punjab Cricket Association IS Bindra Stadium, Mohali': 'Punjab Cricket Association IS Bindra Stadium',
-        'Feroz Shah Kotla': 'Arun Jaitley Stadium',
-        'Arun Jaitley Stadium, Delhi': 'Arun Jaitley Stadium',
-        'Wankhede Stadium, Mumbai': 'Wankhede Stadium',
-        'Brabourne Stadium, Mumbai': 'Brabourne Stadium',
-        'Dr DY Patil Sports Academy, Mumbai': 'Dr DY Patil Sports Academy',
-        'Eden Gardens, Kolkata': 'Eden Gardens',
-        'Sawai Mansingh Stadium, Jaipur': 'Sawai Mansingh Stadium',
-        'MA Chidambaram Stadium, Chepauk': 'MA Chidambaram Stadium',
-        'MA Chidambaram Stadium, Chepauk, Chennai': 'MA Chidambaram Stadium',
-        'Sardar Patel Stadium, Motera': 'Narendra Modi Stadium',
+        'M.Chinnaswamy Stadium': 'M Chinnaswamy Stadium', 'M Chinnaswamy Stadium, Bengaluru': 'M Chinnaswamy Stadium',
+        'Punjab Cricket Association Stadium, Mohali': 'Punjab Cricket Association IS Bindra Stadium', 'Punjab Cricket Association IS Bindra Stadium, Mohali': 'Punjab Cricket Association IS Bindra Stadium',
+        'Feroz Shah Kotla': 'Arun Jaitley Stadium', 'Arun Jaitley Stadium, Delhi': 'Arun Jaitley Stadium',
+        'Wankhede Stadium, Mumbai': 'Wankhede Stadium', 'Brabourne Stadium, Mumbai': 'Brabourne Stadium',
+        'Dr DY Patil Sports Academy, Mumbai': 'Dr DY Patil Sports Academy', 'Eden Gardens, Kolkata': 'Eden Gardens',
+        'Sawai Mansingh Stadium, Jaipur': 'Sawai Mansingh Stadium', 'MA Chidambaram Stadium, Chepauk': 'MA Chidambaram Stadium',
+        'MA Chidambaram Stadium, Chepauk, Chennai': 'MA Chidambaram Stadium', 'Sardar Patel Stadium, Motera': 'Narendra Modi Stadium',
         'Narendra Modi Stadium, Ahmedabad': 'Narendra Modi Stadium',
-        'Rajiv Gandhi International Stadium, Uppal': 'Rajiv Gandhi International Stadium',
-        'Rajiv Gandhi International Stadium, Uppal, Hyderabad': 'Rajiv Gandhi International Stadium',
-        'Zayed Cricket Stadium, Abu Dhabi': 'Zayed Cricket Stadium',
-        'Himachal Pradesh Cricket Association Stadium, Dharamsala': 'Himachal Pradesh Cricket Association Stadium',
-        'Maharashtra Cricket Association Stadium, Pune': 'Maharashtra Cricket Association Stadium',
-        'Dr. Y.S. Rajasekhara Reddy ACA-VDCA Cricket Stadium, Visakhapatnam': 'Dr. Y.S. Rajasekhara Reddy ACA-VDCA Cricket Stadium'
+        'Rajiv Gandhi International Stadium, Uppal': 'Rajiv Gandhi International Stadium', 'Rajiv Gandhi International Stadium, Uppal, Hyderabad': 'Rajiv Gandhi International Stadium',
+        'Zayed Cricket Stadium, Abu Dhabi': 'Zayed Cricket Stadium', 'Himachal Pradesh Cricket Association Stadium, Dharamsala': 'Himachal Pradesh Cricket Association Stadium',
+        'Maharashtra Cricket Association Stadium, Pune': 'Maharashtra Cricket Association Stadium', 'Dr. Y.S. Rajasekhara Reddy ACA-VDCA Cricket Stadium, Visakhapatnam': 'Dr. Y.S. Rajasekhara Reddy ACA-VDCA Cricket Stadium'
     }
     city_mapping = {'Bangalore': 'Bengaluru'}
 
@@ -79,36 +67,37 @@ all_venues = sorted(matches_df['venue'].dropna().unique())
 venue_encoding = {venue: i for i, venue in enumerate(all_venues)}
 home_team_map = matches_df.groupby('city')['team1'].agg(lambda x: x.value_counts().index[0]).to_dict()
 
-# --- Prediction Function with Confidence Adjustment ---
+# --- Prediction Function with Confidence Adjustment and Initial Blending ---
 def predict_probability(state_df):
-    """Predicts win probability using a hybrid model: ML + logical rules + confidence adjustment."""
+    """Predicts win probability with adjustments for low-wickets and initial over volatility."""
     wickets_left = state_df['wickets_left'].iloc[0]
     runs_left = state_df['runs_left'].iloc[0]
     balls_left = state_df['balls_left'].iloc[0]
+    balls_so_far = state_df['balls_so_far'].iloc[0]
     
+    # 1. Hard Rules for Game Over
     if runs_left <= 0: return 1.0
     if wickets_left <= 0 or balls_left <= 0: return 0.0
-    
     required_rr = (runs_left * 6 / balls_left) if balls_left > 0 else 999
     if required_rr > 40: return 0.0
     
-    over = state_df['balls_so_far'].iloc[0] / 6
+    # 2. Get Raw Model Prediction
+    over = balls_so_far / 6
     state_df['phase_Middle'] = 1 if 6 < over <= 15 else 0
     state_df['phase_Death'] = 1 if over > 15 else 0
     state_df['wicket_pressure'] = state_df['required_run_rate'] * (11 - state_df['wickets_left'])
     state_df['danger_index'] = state_df['required_run_rate'] / (state_df['wickets_left'] + 0.1)
-
     feature_order = [
         'batting_team', 'bowling_team', 'venue', 'balls_so_far', 'balls_left',
         'total_runs_so_far', 'runs_left', 'current_run_rate', 'required_run_rate',
         'wickets_left', 'run_rate_diff', 'is_home_team', 'phase_Middle',
         'phase_Death', 'wicket_pressure', 'danger_index'
     ]
-
     predict_df = state_df[feature_order]
     predict_df.replace([np.inf, -np.inf], 999, inplace=True)
     raw_prob = model.predict_proba(predict_df)[0][1]
 
+    # 3. Apply Confidence Multiplier for low-wicket scenarios
     if wickets_left <= 3:
         confidence_multipliers = {1: 0.5, 2: 0.75, 3: 0.9}
         multiplier = confidence_multipliers.get(wickets_left, 1.0)
@@ -116,6 +105,11 @@ def predict_probability(state_df):
     else:
         final_prob = raw_prob
 
+    # --- FIX: Blend the probability during the first over for stability ---
+    if balls_so_far < 6:
+        blending_factor = (6 - balls_so_far) / 6.0
+        final_prob = (blending_factor * 0.5) + ((1 - blending_factor) * final_prob)
+        
     return final_prob
 
 # --- UI Layout ---
@@ -144,9 +138,7 @@ with st.sidebar:
         st.session_state.bowling_team = bowling_team
         st.session_state.venue = venue
         st.session_state.selected_city = selected_city
-
         initial_prob = 0.5
-        
         st.session_state.probabilities = [initial_prob]
         st.session_state.overs_history = [0.0]
         st.rerun()
@@ -219,7 +211,7 @@ if 'simulation_started' in st.session_state and st.session_state.simulation_star
                 current_rr = (runs_so_far * 6 / st.session_state.balls_so_far) if st.session_state.balls_so_far > 0 else 0
                 required_rr = (st.session_state.runs_left * 6 / balls_left) if balls_left > 0 else 0
                 
-                state_df = pd.DataFrame([{
+                state__df = pd.DataFrame([{
                     'batting_team': team_encoding.get(st.session_state.batting_team),
                     'bowling_team': team_encoding.get(st.session_state.bowling_team),
                     'venue': venue_encoding.get(st.session_state.venue),
