@@ -27,10 +27,8 @@ def load_data():
     
     # --- Data Cleaning and Mapping ---
     team_name_mapping = {
-        'Delhi Daredevils': 'Delhi Capitals', 
-        'Kings XI Punjab': 'Punjab Kings', 
-        'Deccan Chargers': 'Sunrisers Hyderabad', 
-        'Rising Pune Supergiant': 'Rising Pune Supergiants', 
+        'Delhi Daredevils': 'Delhi Capitals', 'Kings XI Punjab': 'Punjab Kings', 
+        'Deccan Chargers': 'Sunrisers Hyderabad', 'Rising Pune Supergiant': 'Rising Pune Supergiants', 
         'Royal Challengers Bengaluru': 'Royal Challengers Bangalore'
     }
     team_cols = ['team1', 'team2', 'toss_winner', 'winner']
@@ -68,33 +66,38 @@ all_venues = sorted(matches_df['venue'].dropna().unique())
 venue_encoding = {venue: i for i, venue in enumerate(all_venues)}
 home_team_map = matches_df.groupby('city')['team1'].agg(lambda x: x.value_counts().index[0]).to_dict()
 
-# --- Prediction Function ---
-def predict_probability(match_state):
-    """Predicts the win probability based on the current match state."""
-    df = pd.DataFrame([match_state])
+# --- Prediction Function (Updated) ---
+def predict_probability(state_df):
+    """Predicts the win probability based on the current match state DataFrame."""
+    # This function now expects a DataFrame that already has all the raw features.
     
-    over = df['balls_so_far'].iloc[0] / 6
-    df['phase_Middle'] = 1 if 6 < over <= 15 else 0
-    df['phase_Death'] = 1 if over > 15 else 0
-    df['wicket_pressure'] = df['required_run_rate'] * (11 - df['wickets_left'])
-    df['danger_index'] = df['required_run_rate'] / (df['wickets_left'] + 0.1)
+    # Calculate derived features
+    over = state_df['balls_so_far'].iloc[0] / 6
+    state_df['phase_Middle'] = 1 if 6 < over <= 15 else 0
+    state_df['phase_Death'] = 1 if over > 15 else 0
+    state_df['wicket_pressure'] = state_df['required_run_rate'] * (11 - state_df['wickets_left'])
+    state_df['danger_index'] = state_df['required_run_rate'] / (state_df['wickets_left'] + 0.1)
     
+    # Ensure the final feature order matches the model's training order
     feature_order = [
         'batting_team', 'bowling_team', 'venue', 'balls_so_far', 'balls_left',
         'total_runs_so_far', 'runs_left', 'current_run_rate', 'required_run_rate',
         'wickets_left', 'run_rate_diff', 'is_home_team', 'phase_Middle', 
         'phase_Death', 'wicket_pressure', 'danger_index'
     ]
-    df = df[feature_order]
-    df.replace([np.inf, -np.inf], 999, inplace=True)
+    state_df = state_df[feature_order]
+
+    # Handle any potential infinite values
+    state_df.replace([np.inf, -np.inf], 999, inplace=True)
     
-    return model.predict_proba(df)[0][1]
+    return model.predict_proba(state_df)[0][1]
 
 # --- Streamlit UI ---
 st.set_page_config(page_title="IPL Live Win Predictor", page_icon="🏏", layout="wide")
 st.title("🏏 IPL Live Match Win Predictor")
 st.markdown("Simulate a match ball-by-ball or jump to any point in the chase.")
 
+# (Sidebar code remains the same...)
 with st.sidebar:
     st.header("⚙️ Match Setup")
     batting_team = st.selectbox("Select Batting Team", all_teams)
@@ -122,6 +125,7 @@ with st.sidebar:
         st.session_state.venue_enc = venue_encoding.get(venue)
         st.session_state.is_home_team = 1 if batting_team == home_team_map.get(selected_city) else 0
 
+
 if 'simulation_started' in st.session_state and st.session_state.simulation_started:
     st.header("Current Match State")
     col1, col2, col3, col4 = st.columns(4)
@@ -130,7 +134,6 @@ if 'simulation_started' in st.session_state and st.session_state.simulation_star
     col3.metric("Wickets Left", st.session_state.wickets_left)
     col4.metric("Balls Left", 120 - st.session_state.balls_so_far)
 
-    # --- JUMP TO A SPECIFIC POINT FEATURE ---
     with st.expander("✏️ Jump to a Specific Point in the Match"):
         override_cols = st.columns(3)
         over_input = override_cols[0].number_input("Overs Bowled:", min_value=0, max_value=20, value=int(st.session_state.balls_so_far / 6), step=1)
@@ -146,18 +149,19 @@ if 'simulation_started' in st.session_state and st.session_state.simulation_star
             balls_left = 120 - st.session_state.balls_so_far
             runs_so_far = st.session_state.target - st.session_state.runs_left
             current_rr = (runs_so_far * 6 / st.session_state.balls_so_far) if st.session_state.balls_so_far > 0 else 0
-            required_rr = (st.session_state.runs_left * 6 / balls_left) if balls_left > 0 else float('inf')
+            required_rr = (st.session_state.runs_left * 6 / balls_left) if balls_left > 0 else 0
             
-            initial_state = {
+            # --- FIX: Create a DataFrame with all necessary columns ---
+            initial_state_df = pd.DataFrame([{
                 'batting_team': st.session_state.batting_team_enc, 'bowling_team': st.session_state.bowling_team_enc,
                 'venue': st.session_state.venue_enc, 'balls_so_far': st.session_state.balls_so_far,
                 'balls_left': balls_left, 'total_runs_so_far': runs_so_far, 'runs_left': st.session_state.runs_left,
-                'current_run_rate': current_rr, 'required_run_rate': required_rr if required_rr != float('inf') else 99,
-                'wickets_left': st.session_state.wickets_left, 'run_rate_diff': current_rr - (required_rr if required_rr != float('inf') else 99),
+                'current_run_rate': current_rr, 'required_run_rate': required_rr,
+                'wickets_left': st.session_state.wickets_left, 'run_rate_diff': current_rr - required_rr,
                 'is_home_team': st.session_state.is_home_team
-            }
+            }])
             
-            initial_prob = predict_probability(initial_state)
+            initial_prob = predict_probability(initial_state_df)
             st.session_state.probabilities = [initial_prob]
             st.session_state.overs_history = [st.session_state.balls_so_far / 6]
             st.success("Match state updated! Initial probability calculated.")
@@ -183,22 +187,24 @@ if 'simulation_started' in st.session_state and st.session_state.simulation_star
                 balls_left = 120 - st.session_state.balls_so_far
                 runs_so_far = st.session_state.target - st.session_state.runs_left
                 current_rr = (runs_so_far * 6 / st.session_state.balls_so_far) if st.session_state.balls_so_far > 0 else 0
-                required_rr = (st.session_state.runs_left * 6 / balls_left) if balls_left > 0 else float('inf')
+                required_rr = (st.session_state.runs_left * 6 / balls_left) if balls_left > 0 else 0
                 
-                current_state = {
+                # --- FIX: Create a DataFrame with all necessary columns ---
+                current_state_df = pd.DataFrame([{
                     'batting_team': st.session_state.batting_team_enc, 'bowling_team': st.session_state.bowling_team_enc,
                     'venue': st.session_state.venue_enc, 'balls_so_far': st.session_state.balls_so_far,
                     'balls_left': balls_left, 'total_runs_so_far': runs_so_far, 'runs_left': st.session_state.runs_left,
-                    'current_run_rate': current_rr, 'required_run_rate': required_rr if required_rr != float('inf') else 99,
-                    'wickets_left': st.session_state.wickets_left, 'run_rate_diff': current_rr - (required_rr if required_rr != float('inf') else 99),
+                    'current_run_rate': current_rr, 'required_run_rate': required_rr,
+                    'wickets_left': st.session_state.wickets_left, 'run_rate_diff': current_rr - required_rr,
                     'is_home_team': st.session_state.is_home_team
-                }
+                }])
                 
-                win_prob = predict_probability(current_state)
+                win_prob = predict_probability(current_state_df)
                 st.session_state.probabilities.append(win_prob)
                 st.session_state.overs_history.append(st.session_state.balls_so_far / 6)
                 st.rerun()
 
+    # (Plotting code remains the same...)
     with plot_col:
         st.subheader("Win Probability Chart")
         if st.session_state.probabilities:
