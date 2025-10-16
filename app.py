@@ -7,7 +7,7 @@ import numpy as np
 # --- Caching Functions ---
 @st.cache_resource
 def load_model():
-    """Loads the venue-neutral, in-game prediction model."""
+    """Loads the final, context-aware prediction model."""
     try:
         with open("xgb_model.pkl", "rb") as f:
             model = pickle.load(f)
@@ -61,10 +61,13 @@ if model is None or matches_df is None:
 # --- Pre-computation for UI ---
 all_teams = sorted(matches_df['team1'].dropna().unique())
 team_encoding = {team: i for i, team in enumerate(all_teams)}
+all_venues = sorted(matches_df['venue'].dropna().unique())
+venue_encoding = {venue: i for i, venue in enumerate(all_venues)}
+home_team_map = matches_df.groupby('city')['team1'].agg(lambda x: x.value_counts().index[0]).to_dict()
 
-# --- Prediction Function (Venue-Neutral) ---
+# --- Prediction Function (Context-Aware) ---
 def predict_probability(state_df):
-    """Predicts win probability using the venue-neutral in-game model."""
+    """Predicts win probability using the full, context-aware in-game model."""
     wickets_left = state_df['wickets_left'].iloc[0]
     runs_left = state_df['runs_left'].iloc[0]
     balls_left = state_df['balls_left'].iloc[0]
@@ -75,19 +78,17 @@ def predict_probability(state_df):
     if required_rr > 40: return 0.0
     if runs_left <= 0: return 1.0
 
-    # Add derived features required by the model
     over = state_df['balls_so_far'].iloc[0] / 6
     state_df['phase_Middle'] = 1 if 6 < over <= 15 else 0
     state_df['phase_Death'] = 1 if over > 15 else 0
     state_df['wicket_pressure'] = state_df['required_run_rate'] * (11 - state_df['wickets_left'])
     state_df['danger_index'] = state_df['required_run_rate'] / (state_df['wickets_left'] + 0.1)
     
-    # Define the final feature order that the model expects
     feature_order = [
-        'batting_team', 'bowling_team', 'balls_so_far', 'balls_left',
+        'batting_team', 'bowling_team', 'venue', 'balls_so_far', 'balls_left',
         'total_runs_so_far', 'runs_left', 'current_run_rate', 'required_run_rate',
-        'wickets_left', 'run_rate_diff', 'phase_Middle', 'phase_Death',
-        'wicket_pressure', 'danger_index'
+        'wickets_left', 'run_rate_diff', 'is_home_team', 'phase_Middle',
+        'phase_Death', 'wicket_pressure', 'danger_index'
     ]
     
     predict_df = state_df[feature_order]
@@ -97,7 +98,7 @@ def predict_probability(state_df):
 # --- UI Layout ---
 st.set_page_config(page_title="IPL Live Win Predictor", page_icon="🏏", layout="wide")
 st.title("🏏 IPL Live Match Win Predictor")
-st.markdown("A smart, matchup-aware starting probability that transitions to an unbiased, in-game prediction model.")
+st.markdown("A smart, matchup-aware starting probability that transitions to a powerful, in-game prediction model.")
 
 with st.sidebar:
     st.header("⚙️ Match Setup")
@@ -118,7 +119,8 @@ with st.sidebar:
         st.session_state.balls_so_far = 0
         st.session_state.batting_team = batting_team
         st.session_state.bowling_team = bowling_team
-        st.session_state.venue = venue # Save for consistency
+        st.session_state.venue = venue
+        st.session_state.selected_city = selected_city
         
         # --- Hyper-Specific Smart Initial Probability ---
         try:
@@ -159,10 +161,11 @@ if 'simulation_started' in st.session_state and st.session_state.simulation_star
             current_rr = (runs_so_far * 6 / st.session_state.balls_so_far) if st.session_state.balls_so_far > 0 else 0
             required_rr = (st.session_state.runs_left * 6 / balls_left) if balls_left > 0 else 0
             
-            # <<< FIX: Create the DataFrame with the correct base features >>>
+            # <<< FIX: Create the DataFrame with the full, correct feature set >>>
             state_df = pd.DataFrame([{
                 'batting_team': team_encoding.get(st.session_state.batting_team),
                 'bowling_team': team_encoding.get(st.session_state.bowling_team),
+                'venue': venue_encoding.get(st.session_state.venue),
                 'balls_so_far': st.session_state.balls_so_far,
                 'balls_left': balls_left,
                 'total_runs_so_far': runs_so_far,
@@ -171,6 +174,7 @@ if 'simulation_started' in st.session_state and st.session_state.simulation_star
                 'required_run_rate': required_rr,
                 'wickets_left': st.session_state.wickets_left,
                 'run_rate_diff': current_rr - required_rr,
+                'is_home_team': 1 if st.session_state.batting_team == home_team_map.get(st.session_state.selected_city) else 0
             }])
             
             initial_prob = predict_probability(state_df)
@@ -200,10 +204,11 @@ if 'simulation_started' in st.session_state and st.session_state.simulation_star
                 current_rr = (runs_so_far * 6 / st.session_state.balls_so_far) if st.session_state.balls_so_far > 0 else 0
                 required_rr = (st.session_state.runs_left * 6 / balls_left) if balls_left > 0 else 0
                 
-                # <<< FIX: Create the DataFrame with the correct base features >>>
+                # <<< FIX: Create the DataFrame with the full, correct feature set >>>
                 state_df = pd.DataFrame([{
                     'batting_team': team_encoding.get(st.session_state.batting_team),
                     'bowling_team': team_encoding.get(st.session_state.bowling_team),
+                    'venue': venue_encoding.get(st.session_state.venue),
                     'balls_so_far': st.session_state.balls_so_far,
                     'balls_left': balls_left,
                     'total_runs_so_far': runs_so_far,
@@ -212,6 +217,7 @@ if 'simulation_started' in st.session_state and st.session_state.simulation_star
                     'required_run_rate': required_rr,
                     'wickets_left': st.session_state.wickets_left,
                     'run_rate_diff': current_rr - required_rr,
+                    'is_home_team': 1 if st.session_state.batting_team == home_team_map.get(st.session_state.selected_city) else 0
                 }])
                 
                 win_prob = predict_probability(state_df)
