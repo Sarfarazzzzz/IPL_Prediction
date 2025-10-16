@@ -120,6 +120,8 @@ st.title("🏏 IPL Live Match Win Predictor")
 st.markdown("Simulate a match ball-by-ball or jump to any point in the chase.")
 
 # (Sidebar code remains the same...)
+# --- REPLACE THIS BLOCK IN YOUR app.py ---
+
 with st.sidebar:
     st.header("⚙️ Match Setup")
     batting_team = st.selectbox("Select Batting Team", all_teams)
@@ -131,7 +133,10 @@ with st.sidebar:
     target_runs = st.number_input("Target Runs to Win", min_value=1, max_value=400, value=180)
 
     if st.button("Start / Reset Simulation", type="primary"):
+        # Clear any previous simulation data
         st.session_state.clear()
+        
+        # Initialize the match state
         st.session_state.simulation_started = True
         st.session_state.target = target_runs
         st.session_state.runs_left = target_runs
@@ -139,13 +144,39 @@ with st.sidebar:
         st.session_state.balls_so_far = 0
         st.session_state.batting_team = batting_team
         st.session_state.bowling_team = bowling_team
-        st.session_state.probabilities = []
-        st.session_state.overs_history = []
         
+        # Store encoded values for prediction
         st.session_state.batting_team_enc = team_encoding.get(batting_team)
         st.session_state.bowling_team_enc = team_encoding.get(bowling_team)
         st.session_state.venue_enc = venue_encoding.get(venue)
         st.session_state.is_home_team = 1 if batting_team == home_team_map.get(selected_city) else 0
+
+        # --- NEW: Calculate and Display Initial Probability ---
+        # Calculate the required run rate at the start of the innings (0 balls bowled)
+        initial_rrr = (st.session_state.target * 6) / 120
+
+        # Create the DataFrame for the very first prediction
+        initial_state_df = pd.DataFrame([{
+            'batting_team': st.session_state.batting_team_enc,
+            'bowling_team': st.session_state.bowling_team_enc,
+            'venue': st.session_state.venue_enc,
+            'balls_so_far': 0,
+            'balls_left': 120,
+            'total_runs_so_far': 0,
+            'runs_left': st.session_state.target,
+            'current_run_rate': 0.0,
+            'required_run_rate': initial_rrr,
+            'wickets_left': 10,
+            'run_rate_diff': 0.0 - initial_rrr,
+            'is_home_team': st.session_state.is_home_team
+        }])
+        
+        # Get the initial prediction from the model
+        initial_prob = predict_probability(initial_state_df)
+        
+        # Initialize the history lists with the starting values
+        st.session_state.probabilities = [initial_prob]
+        st.session_state.overs_history = [0.0]
 
 
 if 'simulation_started' in st.session_state and st.session_state.simulation_started:
