@@ -18,31 +18,38 @@ def load_model():
 
 @st.cache_data
 def load_data():
-    """Loads pre-processed data and the necessary lookup tables."""
+    """Loads pre-processed data and the definitive smart start lookup table."""
     try:
         matches = pd.read_csv("matches.csv")
-        initial_prob_lookup = pd.read_csv("initial_prob_lookup.csv")
-        team_strength = pd.read_csv("team_strength.csv")
+        smart_start_lookup = pd.read_csv("smart_start_lookup.csv")
     except FileNotFoundError:
-        st.error("Required data files not found. Ensure 'matches.csv', 'initial_prob_lookup.csv', and 'team_strength.csv' are in your repository.")
-        return None, None, None
+        st.error("Required data files not found. Ensure 'matches.csv' and 'smart_start_lookup.csv' are in your repository.")
+        return None, None
 
-    # Data Cleaning
+    # Definitive Data Cleaning
     team_name_mapping = {
         'Delhi Daredevils': 'Delhi Capitals', 'Kings XI Punjab': 'Punjab Kings',
         'Deccan Chargers': 'Sunrisers Hyderabad', 'Rising Pune Supergiant': 'Rising Pune Supergiants',
         'Royal Challengers Bengaluru': 'Royal Challengers Bangalore'
     }
     venue_mapping = {
-        'M.Chinnaswamy Stadium': 'M Chinnaswamy Stadium', 'M Chinnaswamy Stadium, Bengaluru': 'M Chinnaswamy Stadium',
-        'Punjab Cricket Association Stadium, Mohali': 'Punjab Cricket Association IS Bindra Stadium', 'Punjab Cricket Association IS Bindra Stadium, Mohali': 'Punjab Cricket Association IS Bindra Stadium',
-        'Feroz Shah Kotla': 'Arun Jaitley Stadium', 'Arun Jaitley Stadium, Delhi': 'Arun Jaitley Stadium',
-        'Wankhede Stadium, Mumbai': 'Wankhede Stadium', 'Brabourne Stadium, Mumbai': 'Brabourne Stadium', 
-        'Dr DY Patil Sports Academy, Mumbai': 'Dr DY Patil Sports Academy', 'Eden Gardens, Kolkata': 'Eden Gardens',
-        'Sawai Mansingh Stadium, Jaipur': 'Sawai Mansingh Stadium', 'Rajiv Gandhi International Stadium': 'Rajiv Gandhi International Stadium, Uppal',
+        'M.Chinnaswamy Stadium': 'M Chinnaswamy Stadium', 
+        'M Chinnaswamy Stadium, Bengaluru': 'M Chinnaswamy Stadium',
+        'Punjab Cricket Association Stadium, Mohali': 'Punjab Cricket Association IS Bindra Stadium', 
+        'Punjab Cricket Association IS Bindra Stadium, Mohali': 'Punjab Cricket Association IS Bindra Stadium',
+        'Feroz Shah Kotla': 'Arun Jaitley Stadium', 
+        'Arun Jaitley Stadium, Delhi': 'Arun Jaitley Stadium',
+        'Wankhede Stadium, Mumbai': 'Wankhede Stadium',
+        'Brabourne Stadium, Mumbai': 'Brabourne Stadium', 
+        'Dr DY Patil Sports Academy, Mumbai': 'Dr DY Patil Sports Academy',
+        'Eden Gardens, Kolkata': 'Eden Gardens',
+        'Sawai Mansingh Stadium, Jaipur': 'Sawai Mansingh Stadium',
+        'Rajiv Gandhi International Stadium': 'Rajiv Gandhi International Stadium, Uppal',
         'Rajiv Gandhi International Stadium, Uppal, Hyderabad': 'Rajiv Gandhi International Stadium, Uppal',
-        'MA Chidambaram Stadium, Chepauk': 'MA Chidambaram Stadium', 'MA Chidambaram Stadium, Chepauk, Chennai': 'MA Chidambaram Stadium',
-        'Sardar Patel Stadium, Motera': 'Narendra Modi Stadium', 'Narendra Modi Stadium, Ahmedabad': 'Narendra Modi Stadium'
+        'MA Chidambaram Stadium, Chepauk': 'MA Chidambaram Stadium',
+        'MA Chidambaram Stadium, Chepauk, Chennai': 'MA Chidambaram Stadium',
+        'Sardar Patel Stadium, Motera': 'Narendra Modi Stadium',
+        'Narendra Modi Stadium, Ahmedabad': 'Narendra Modi Stadium'
     }
     city_mapping = {'Bangalore': 'Bengaluru'}
 
@@ -51,13 +58,13 @@ def load_data():
     matches['venue'] = matches['venue'].replace(venue_mapping)
     matches['city'] = matches['city'].replace(city_mapping)
 
-    return matches, initial_prob_lookup, team_strength
+    return matches, smart_start_lookup
 
 # --- Load Assets ---
 model = load_model()
-matches_df, initial_prob_lookup, team_strength = load_data()
+matches_df, smart_start_lookup = load_data()
 
-if model is None or matches_df is None or team_strength is None:
+if model is None or matches_df is None:
     st.stop()
 
 # --- Pre-computation for UI ---
@@ -132,36 +139,40 @@ with st.sidebar:
         st.session_state.venue = venue
         st.session_state.selected_city = selected_city
         
-        # --- Final Smart Initial Probability Logic ---
+        # --- Definitive Smart Initial Probability with Robust Fallback ---
         bins = [0, 140, 160, 180, 200, 220, 300]
         labels = ['<140', '140-159', '160-179', '180-199', '200-219', '>220']
         target_bin = pd.cut([target_runs], bins=bins, labels=labels)[0]
         
-        try:
-            prob_row = initial_prob_lookup[
-                (initial_prob_lookup['venue'] == venue) &
-                (initial_prob_lookup['target_bin'] == target_bin)
-            ]
-            baseline_prob = prob_row['chase_win'].values[0]
-        except (IndexError, KeyError):
-            baseline_prob = 0.50
-        
-        try:
-            batting_strength = team_strength.loc[team_strength['team'] == batting_team, 'win_rate'].values[0]
-            bowling_strength = team_strength.loc[team_strength['team'] == bowling_team, 'win_rate'].values[0]
-            
-            strength_diff = batting_strength - bowling_strength
-            adjustment = strength_diff / 2
+        initial_prob = None
 
-            initial_prob = np.clip(baseline_prob + adjustment, 0.05, 0.95)
-        except IndexError:
-            initial_prob = baseline_prob
+        # Level 1: Try for the most specific case
+        specific_query = smart_start_lookup[
+            (smart_start_lookup['venue'] == venue) &
+            (smart_start_lookup['batting_team'] == batting_team) &
+            (smart_start_lookup['bowling_team'] == bowling_team) &
+            (smart_start_lookup['target_bin'] == target_bin)
+        ]
+        if not specific_query.empty:
+            initial_prob = specific_query['chase_win'].values[0]
+        
+        # Level 2: Fallback to general venue performance
+        if initial_prob is None:
+            fallback_query = smart_start_lookup[
+                (smart_start_lookup['venue'] == venue) &
+                (smart_start_lookup['target_bin'] == target_bin)
+            ]
+            if not fallback_query.empty:
+                initial_prob = fallback_query['chase_win'].mean()
+
+        # Level 3: Final fallback
+        if initial_prob is None or pd.isna(initial_prob):
+            initial_prob = 0.50
         
         st.session_state.probabilities = [initial_prob]
         st.session_state.overs_history = [0.0]
 
 if 'simulation_started' in st.session_state and st.session_state.simulation_started:
-    # ... (The rest of your UI code remains the same) ...
     st.header("Current Match State")
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Target", st.session_state.target)
@@ -269,3 +280,4 @@ if 'simulation_started' in st.session_state and st.session_state.simulation_star
 
 else:
     st.info("Setup a match in the sidebar and click 'Start / Reset Simulation' to begin.")
+
