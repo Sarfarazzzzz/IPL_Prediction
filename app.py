@@ -70,6 +70,28 @@ home_team_map = matches_df.groupby('city')['team1'].agg(lambda x: x.value_counts
 def predict_probability(state_df):
     """Predicts the win probability based on the current match state DataFrame."""
     # This function now expects a DataFrame that already has all the raw features.
+
+    wickets_left = state_df['wickets_left'].iloc[0]
+    runs_left = state_df['runs_left'].iloc[0]
+    balls_left = state_df['balls_left'].iloc[0]
+    required_rr = state_df['required_run_rate'].iloc[0]
+
+    # --- Rule 1: Wickets are all gone ---
+    if wickets_left <= 0 and runs_left > 0:
+        return 0.0
+    
+    # --- Rule 2: Balls have run out ---
+    if balls_left <= 0 and runs_left > 0:
+        return 0.0
+        
+    # --- FIX: Rule 3: Required run rate is impossible ---
+    # A required rate of 36 means a six is needed on every ball.
+    if required_rr > 40:
+        return 0.0
+
+    # --- Rule 4: The batting team has already won ---
+    if runs_left <= 0:
+        return 1.0
     
     # Calculate derived features
     over = state_df['balls_so_far'].iloc[0] / 6
