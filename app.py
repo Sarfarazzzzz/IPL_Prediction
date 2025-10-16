@@ -65,19 +65,21 @@ all_venues = sorted(matches_df['venue'].dropna().unique())
 venue_encoding = {venue: i for i, venue in enumerate(all_venues)}
 home_team_map = matches_df.groupby('city')['team1'].agg(lambda x: x.value_counts().index[0]).to_dict()
 
-# --- Prediction Function (Context-Aware) ---
+# --- Prediction Function with Confidence Adjustment ---
 def predict_probability(state_df):
-    """Predicts win probability using the full, context-aware in-game model."""
+    """Predicts win probability using a hybrid model: ML + logical rules + confidence adjustment."""
     wickets_left = state_df['wickets_left'].iloc[0]
     runs_left = state_df['runs_left'].iloc[0]
     balls_left = state_df['balls_left'].iloc[0]
     required_rr = state_df['required_run_rate'].iloc[0]
 
+    # 1. Hard Rules for Game Over Scenarios
     if wickets_left <= 0 and runs_left > 0: return 0.0
     if balls_left <= 0 and runs_left > 0: return 0.0
     if required_rr > 40: return 0.0
     if runs_left <= 0: return 1.0
 
+    # 2. Get the Raw Prediction from the ML Model
     over = state_df['balls_so_far'].iloc[0] / 6
     state_df['phase_Middle'] = 1 if 6 < over <= 15 else 0
     state_df['phase_Death'] = 1 if over > 15 else 0
@@ -93,7 +95,17 @@ def predict_probability(state_df):
     
     predict_df = state_df[feature_order]
     predict_df.replace([np.inf, -np.inf], 999, inplace=True)
-    return model.predict_proba(predict_df)[0][1]
+    raw_prob = model.predict_proba(predict_df)[0][1]
+
+    # 3. Apply Confidence Multiplier for Low-Wicket Scenarios
+    if wickets_left <= 3:
+        confidence_multipliers = {1: 0.5, 2: 0.75, 3: 0.9}
+        multiplier = confidence_multipliers.get(wickets_left, 1.0)
+        final_prob = raw_prob * multiplier
+    else:
+        final_prob = raw_prob
+        
+    return final_prob
 
 # --- UI Layout ---
 st.set_page_config(page_title="IPL Live Win Predictor", page_icon="🏏", layout="wide")
@@ -122,7 +134,6 @@ with st.sidebar:
         st.session_state.venue = venue
         st.session_state.selected_city = selected_city
         
-        # --- Hyper-Specific Smart Initial Probability ---
         try:
             prob_row = matchup_odds[
                 (matchup_odds['venue'] == venue) &
@@ -161,7 +172,6 @@ if 'simulation_started' in st.session_state and st.session_state.simulation_star
             current_rr = (runs_so_far * 6 / st.session_state.balls_so_far) if st.session_state.balls_so_far > 0 else 0
             required_rr = (st.session_state.runs_left * 6 / balls_left) if balls_left > 0 else 0
             
-            # <<< FIX: Create the DataFrame with the full, correct feature set >>>
             state_df = pd.DataFrame([{
                 'batting_team': team_encoding.get(st.session_state.batting_team),
                 'bowling_team': team_encoding.get(st.session_state.bowling_team),
@@ -204,7 +214,6 @@ if 'simulation_started' in st.session_state and st.session_state.simulation_star
                 current_rr = (runs_so_far * 6 / st.session_state.balls_so_far) if st.session_state.balls_so_far > 0 else 0
                 required_rr = (st.session_state.runs_left * 6 / balls_left) if balls_left > 0 else 0
                 
-                # <<< FIX: Create the DataFrame with the full, correct feature set >>>
                 state_df = pd.DataFrame([{
                     'batting_team': team_encoding.get(st.session_state.batting_team),
                     'bowling_team': team_encoding.get(st.session_state.bowling_team),
