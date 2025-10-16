@@ -49,7 +49,7 @@ def load_data():
     for col in ['team1', 'team2', 'toss_winner', 'winner']:
         matches[col] = matches[col].replace(team_name_mapping)
     matches['venue'] = matches['venue'].replace(venue_mapping)
-    matches['city'] = matches[city].replace(city_mapping)
+    matches['city'] = matches['city'].replace(city_mapping)
 
     return matches
 
@@ -206,7 +206,7 @@ if 'simulation_started' in st.session_state and st.session_state.simulation_star
     input_col, plot_col = st.columns([1, 2])
 
     with input_col:
-        runs_scored = st.selectbox("Runs on this ball:", (0, 1, 2, 3, 4, 6), key="runs")
+        runs_scored = st.selectbox("Runs on this ball:", (0, 1, 2, 3, 4, 5, 6), key="runs")
         is_wicket = st.checkbox("Wicket on this ball?", key="wicket")
         
         if st.button("Next Ball", type="secondary"):
