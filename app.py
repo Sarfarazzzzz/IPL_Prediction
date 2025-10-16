@@ -18,16 +18,16 @@ def load_model():
 
 @st.cache_data
 def load_data():
-    """Loads pre-processed data and the definitive two-level lookup tables."""
+    """Loads pre-processed data and the necessary lookup tables."""
     try:
         matches = pd.read_csv("matches.csv")
-        matchup_lookup = pd.read_csv("matchup_lookup.csv")
-        venue_lookup = pd.read_csv("venue_lookup.csv")
+        initial_prob_lookup = pd.read_csv("initial_prob_lookup.csv")
+        team_strength = pd.read_csv("team_strength.csv")
     except FileNotFoundError:
-        st.error("Required data files not found. Ensure 'matches.csv', 'matchup_lookup.csv', and 'venue_lookup.csv' are in your repository.")
+        st.error("Required data files not found. Ensure 'matches.csv', 'initial_prob_lookup.csv', and 'team_strength.csv' are in your repository.")
         return None, None, None
 
-    # Definitive Data Cleaning
+    # Data Cleaning
     team_name_mapping = {
         'Delhi Daredevils': 'Delhi Capitals', 'Kings XI Punjab': 'Punjab Kings',
         'Deccan Chargers': 'Sunrisers Hyderabad', 'Rising Pune Supergiant': 'Rising Pune Supergiants',
@@ -51,13 +51,13 @@ def load_data():
     matches['venue'] = matches['venue'].replace(venue_mapping)
     matches['city'] = matches['city'].replace(city_mapping)
 
-    return matches, matchup_lookup, venue_lookup
+    return matches, initial_prob_lookup, team_strength
 
 # --- Load Assets ---
 model = load_model()
-matches_df, matchup_lookup, venue_lookup = load_data()
+matches_df, initial_prob_lookup, team_strength = load_data()
 
-if model is None or matches_df is None:
+if model is None or matches_df is None or team_strength is None:
     st.stop()
 
 # --- Pre-computation for UI ---
@@ -132,35 +132,30 @@ with st.sidebar:
         st.session_state.venue = venue
         st.session_state.selected_city = selected_city
         
-        # --- Definitive Smart Initial Probability with Robust Two-Level Fallback ---
+        # --- Final Smart Initial Probability Logic ---
         bins = [0, 140, 160, 180, 200, 220, 300]
         labels = ['<140', '140-159', '160-179', '180-199', '200-219', '>220']
         target_bin = pd.cut([target_runs], bins=bins, labels=labels)[0]
         
-        initial_prob = None
-
-        # Level 1: Try for the hyper-specific matchup
-        specific_query = matchup_lookup[
-            (matchup_lookup['venue'] == venue) &
-            (matchup_lookup['batting_team'] == batting_team) &
-            (matchup_lookup['bowling_team'] == bowling_team) &
-            (matchup_lookup['target_bin'] == target_bin)
-        ]
-        if not specific_query.empty:
-            initial_prob = specific_query['chase_win'].values[0]
-
-        # Level 2: If not found, fall back to the general venue performance
-        if initial_prob is None:
-            fallback_query = venue_lookup[
-                (venue_lookup['venue'] == venue) &
-                (venue_lookup['target_bin'] == target_bin)
+        try:
+            prob_row = initial_prob_lookup[
+                (initial_prob_lookup['venue'] == venue) &
+                (initial_prob_lookup['target_bin'] == target_bin)
             ]
-            if not fallback_query.empty:
-                initial_prob = fallback_query['chase_win'].values[0]
+            baseline_prob = prob_row['chase_win'].values[0]
+        except (IndexError, KeyError):
+            baseline_prob = 0.50
+        
+        try:
+            batting_strength = team_strength.loc[team_strength['team'] == batting_team, 'win_rate'].values[0]
+            bowling_strength = team_strength.loc[team_strength['team'] == bowling_team, 'win_rate'].values[0]
+            
+            strength_diff = batting_strength - bowling_strength
+            adjustment = strength_diff / 2
 
-        # Level 3: Final fallback if no data exists at all
-        if initial_prob is None:
-            initial_prob = 0.50
+            initial_prob = np.clip(baseline_prob + adjustment, 0.05, 0.95)
+        except IndexError:
+            initial_prob = baseline_prob
         
         st.session_state.probabilities = [initial_prob]
         st.session_state.overs_history = [0.0]
@@ -274,4 +269,3 @@ if 'simulation_started' in st.session_state and st.session_state.simulation_star
 
 else:
     st.info("Setup a match in the sidebar and click 'Start / Reset Simulation' to begin.")
-    
