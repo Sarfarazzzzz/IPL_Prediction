@@ -19,14 +19,15 @@ def load_model():
 @st.cache_data
 def load_data():
     """
-    Loads pre-processed match data and the pre-computed historical odds lookup table.
+    Loads pre-processed match data and the pre-computed lookup tables for historical odds and team strength.
     """
     try:
         matches = pd.read_csv("matches.csv")
         initial_prob_lookup = pd.read_csv("initial_prob_lookup.csv")
+        team_strength = pd.read_csv("team_strength.csv")
     except FileNotFoundError:
-        st.error("Required data files ('matches.csv', 'initial_prob_lookup.csv') not found. Please ensure they are in your repository.")
-        return None, None
+        st.error("Required data files not found. Please ensure 'matches.csv', 'initial_prob_lookup.csv', and 'team_strength.csv' are in your repository.")
+        return None, None, None
 
     # --- Data Cleaning ---
     team_name_mapping = {
@@ -51,19 +52,18 @@ def load_data():
     matches['venue'] = matches['venue'].replace(venue_mapping)
     matches['city'] = matches['city'].replace(city_mapping)
 
-    return matches, initial_prob_lookup
+    return matches, initial_prob_lookup, team_strength
 
 # --- Load Assets ---
 model = load_model()
-matches_df, initial_prob_lookup = load_data()
+matches_df, initial_prob_lookup, team_strength = load_data()
 
-if model is None or matches_df is None:
+if model is None or matches_df is None or team_strength is None:
     st.stop()
 
 # --- Pre-computation for UI ---
 all_teams = sorted(matches_df['team1'].dropna().unique())
 team_encoding = {team: i for i, team in enumerate(all_teams)}
-# <<< FIX: Re-added the missing lines below >>>
 all_venues = sorted(matches_df['venue'].dropna().unique())
 venue_encoding = {venue: i for i, venue in enumerate(all_venues)}
 home_team_map = matches_df.groupby('city')['team1'].agg(lambda x: x.value_counts().index[0]).to_dict()
@@ -125,6 +125,8 @@ with st.sidebar:
         st.session_state.batting_team = batting_team
         st.session_state.bowling_team = bowling_team
         
+        # --- Smart Initial Probability with Team Strength Adjustment ---
+        # 1. Get Baseline Probability
         bins = [0, 140, 160, 180, 200, 220, 300]
         labels = ['<140', '140-159', '160-179', '180-199', '200-219', '>220']
         target_bin = pd.cut([target_runs], bins=bins, labels=labels)[0]
@@ -134,9 +136,22 @@ with st.sidebar:
                 (initial_prob_lookup['venue'] == venue) &
                 (initial_prob_lookup['target_bin'] == target_bin)
             ]
-            initial_prob = prob_row['chase_win'].values[0]
+            baseline_prob = prob_row['chase_win'].values[0]
         except (IndexError, KeyError):
-            initial_prob = 0.50
+            baseline_prob = 0.50 # Fallback
+        
+        # 2. Get Team Strength Scores and Apply Adjustment
+        try:
+            batting_strength = team_strength.loc[team_strength['team'] == batting_team, 'win_rate'].values[0]
+            bowling_strength = team_strength.loc[team_strength['team'] == bowling_team, 'win_rate'].values[0]
+            
+            strength_diff = batting_strength - bowling_strength
+            adjustment = strength_diff / 2 # A gentle adjustment factor
+
+            initial_prob = np.clip(baseline_prob + adjustment, 0.05, 0.95) # Clip to avoid extremes
+            
+        except IndexError:
+            initial_prob = baseline_prob # Fallback if a team isn't in the strength file
         
         st.session_state.probabilities = [initial_prob]
         st.session_state.overs_history = [0.0]
