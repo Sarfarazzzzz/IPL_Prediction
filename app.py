@@ -63,6 +63,8 @@ if model is None or matches_df is None:
 # --- Pre-computation for UI ---
 all_teams = sorted(matches_df['team1'].dropna().unique())
 team_encoding = {team: i for i, team in enumerate(all_teams)}
+# <<< FIX: Re-added the missing lines below >>>
+all_venues = sorted(matches_df['venue'].dropna().unique())
 venue_encoding = {venue: i for i, venue in enumerate(all_venues)}
 home_team_map = matches_df.groupby('city')['team1'].agg(lambda x: x.value_counts().index[0]).to_dict()
 
@@ -94,9 +96,7 @@ def predict_probability(state_df):
         'phase_Death', 'wicket_pressure', 'danger_index'
     ]
     
-    # Ensure the DataFrame for prediction has the correct column order
     predict_df = state_df[feature_order]
-
     predict_df.replace([np.inf, -np.inf], 999, inplace=True)
     return model.predict_proba(predict_df)[0][1]
 
@@ -125,7 +125,6 @@ with st.sidebar:
         st.session_state.batting_team = batting_team
         st.session_state.bowling_team = bowling_team
         
-        # --- Smart Initial Probability Logic ---
         bins = [0, 140, 160, 180, 200, 220, 300]
         labels = ['<140', '140-159', '160-179', '180-199', '200-219', '>220']
         target_bin = pd.cut([target_runs], bins=bins, labels=labels)[0]
@@ -137,7 +136,7 @@ with st.sidebar:
             ]
             initial_prob = prob_row['chase_win'].values[0]
         except (IndexError, KeyError):
-            initial_prob = 0.50 # Fallback if no historical data
+            initial_prob = 0.50
         
         st.session_state.probabilities = [initial_prob]
         st.session_state.overs_history = [0.0]
