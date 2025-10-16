@@ -67,9 +67,9 @@ all_venues = sorted(matches_df['venue'].dropna().unique())
 venue_encoding = {venue: i for i, venue in enumerate(all_venues)}
 home_team_map = matches_df.groupby('city')['team1'].agg(lambda x: x.value_counts().index[0]).to_dict()
 
-# --- Prediction Function with Feature Transformation ---
+# --- Prediction Function with Moderated Features ---
 def predict_probability(state_df):
-    """Predicts win probability by transforming outlier-prone features."""
+    """Predicts win probability by moderating volatile features."""
     balls_so_far = state_df['balls_so_far'].iloc[0]
     
     if balls_so_far <= 6:
@@ -82,17 +82,14 @@ def predict_probability(state_df):
     if runs_left <= 0: return 1.0
     if wickets_left <= 0 or balls_left <= 0: return 0.0
     
-    # Create a copy to avoid modifying the original DataFrame in session state
     predict_df = state_df.copy()
-
-    # --- THE FIX: Calculate and then transform the features ---
     required_rr = predict_df['required_run_rate'].iloc[0]
-    predict_df['wicket_pressure'] = required_rr * (11 - wickets_left)
-    predict_df['danger_index'] = required_rr / (wickets_left + 0.1)
+
+    # --- THE FIX: Moderate the feature calculations with square root ---
+    predict_df['wicket_pressure'] = required_rr * np.sqrt(11 - wickets_left)
     
-    # Apply log transformation to tame extreme values
-    predict_df['wicket_pressure'] = np.log1p(predict_df['wicket_pressure'])
-    predict_df['danger_index'] = np.log1p(predict_df['danger_index'])
+    danger_val = required_rr / (wickets_left + 0.1)
+    predict_df['danger_index'] = np.sqrt(danger_val) if danger_val > 0 else 0
     
     over = balls_so_far / 6
     predict_df['phase_Middle'] = 1 if 6 < over <= 15 else 0
@@ -105,9 +102,15 @@ def predict_probability(state_df):
         'phase_Death', 'wicket_pressure', 'danger_index'
     ]
     
-    final_predict_df = predict_df[feature_order]
-    
+    # Ensure all columns the model was trained on are present
+    final_predict_df = pd.DataFrame(columns=model.get_booster().feature_names)
+    for col in feature_order:
+         if col in final_predict_df.columns:
+            final_predict_df[col] = predict_df[col]
+
     final_predict_df.replace([np.inf, -np.inf], 999, inplace=True)
+    final_predict_df.fillna(0, inplace=True)
+    
     model_prob = model.predict_proba(final_predict_df)[0][1]
 
     # Apply Confidence Multiplier
@@ -271,5 +274,3 @@ if 'simulation_started' in st.session_state and st.session_state.simulation_star
             st.metric(label=f"**{st.session_state.batting_team}'s Current Win Probability**", value=f"{final_prob:.2f}%")
 else:
     st.info("Setup a match in the sidebar and click 'Start / Reset Simulation' to begin.")
-
-
