@@ -67,26 +67,27 @@ all_venues = sorted(matches_df['venue'].dropna().unique())
 venue_encoding = {venue: i for i, venue in enumerate(all_venues)}
 home_team_map = matches_df.groupby('city')['team1'].agg(lambda x: x.value_counts().index[0]).to_dict()
 
-# --- Prediction Function with Adjustments and Smart Grace Period ---
+# --- Prediction Function with Blended Transition ---
 def predict_probability(state_df):
-    """Predicts win probability with a smart grace period for the first over."""
+    """Predicts win probability with a blended transition from heuristic to model."""
     balls_so_far = state_df['balls_so_far'].iloc[0]
-
-    # Use the smart, heuristic-based probability for the first over
+    
+    # --- The Final, Best Logic ---
+    # 1. First Over: Use the fixed, smart heuristic
     if balls_so_far <= 6:
         return st.session_state.initial_prob
-    
+
     wickets_left = state_df['wickets_left'].iloc[0]
     runs_left = state_df['runs_left'].iloc[0]
     balls_left = state_df['balls_left'].iloc[0]
     
-    # 1. Hard Rules for Game Over
+    # Hard Rules for Game Over
     if runs_left <= 0: return 1.0
     if wickets_left <= 0 or balls_left <= 0: return 0.0
     required_rr = (runs_left * 6 / balls_left) if balls_left > 0 else 999
     if required_rr > 40: return 0.0
     
-    # 2. Get Raw Model Prediction
+    # Get Raw Model Prediction
     over = balls_so_far / 6
     state_df['phase_Middle'] = 1 if 6 < over <= 15 else 0
     state_df['phase_Death'] = 1 if over > 15 else 0
@@ -100,17 +101,25 @@ def predict_probability(state_df):
     ]
     predict_df = state_df[feature_order]
     predict_df.replace([np.inf, -np.inf], 999, inplace=True)
-    raw_prob = model.predict_proba(predict_df)[0][1]
+    model_prob = model.predict_proba(predict_df)[0][1]
 
-    # 3. Apply Confidence Multiplier for low-wicket scenarios
+    # Apply Confidence Multiplier
     if wickets_left <= 3:
         confidence_multipliers = {1: 0.5, 2: 0.75, 3: 0.9}
         multiplier = confidence_multipliers.get(wickets_left, 1.0)
-        final_prob = raw_prob * multiplier
+        model_prob *= multiplier
+
+    # 2. Second Over: Blend the heuristic and the model
+    if 6 < balls_so_far <= 12:
+        heuristic_prob = st.session_state.initial_prob
+        # Weight of the model's prediction increases with each ball in the 2nd over
+        model_weight = (balls_so_far - 6) / 6.0
+        final_prob = ((1 - model_weight) * heuristic_prob) + (model_weight * model_prob)
+        return final_prob
+    
+    # 3. Third Over Onwards: Use the pure model prediction
     else:
-        final_prob = raw_prob
-        
-    return final_prob
+        return model_prob
 
 # --- UI Layout ---
 st.set_page_config(page_title="IPL Live Win Predictor", page_icon="🏏", layout="wide")
@@ -139,15 +148,10 @@ with st.sidebar:
         st.session_state.venue = venue
         st.session_state.selected_city = selected_city
 
-        # --- THE BETTER WAY: Calculate a target-sensitive initial probability ---
-        par_score = 175  # A baseline score for a 50/50 chance
+        par_score = 175
         score_diff = par_score - target_runs
-        
-        # Adjust probability by 0.75% for every run different from the par score
         adjustment = score_diff * 0.0075 
         initial_prob = 0.5 + adjustment
-        
-        # Clip the probability to be within a reasonable range (e.g., 10% to 90%)
         initial_prob = np.clip(initial_prob, 0.1, 0.9)
         
         st.session_state.initial_prob = initial_prob
@@ -155,7 +159,6 @@ with st.sidebar:
         st.session_state.overs_history = [0.0]
         st.rerun()
 
-# --- The rest of the UI code is unchanged ---
 if 'simulation_started' in st.session_state and st.session_state.simulation_started:
     st.header("Current Match State")
     col1, col2, col3, col4 = st.columns(4)
@@ -206,7 +209,7 @@ if 'simulation_started' in st.session_state and st.session_state.simulation_star
     input_col, plot_col = st.columns([1, 2])
 
     with input_col:
-        runs_scored = st.selectbox("Runs on this ball:", (0, 1, 2, 3, 4, 5, 6), key="runs")
+        runs_scored = st.selectbox("Runs on this ball:", (0, 1, 2, 3, 4, 6), key="runs")
         is_wicket = st.checkbox("Wicket on this ball?", key="wicket")
         
         if st.button("Next Ball", type="secondary"):
