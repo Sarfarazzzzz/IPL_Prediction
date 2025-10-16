@@ -105,7 +105,7 @@ def predict_probability(state_df):
     else:
         final_prob = raw_prob
 
-    # --- FIX: Blend the probability during the first over for stability ---
+    # 4. Blend the probability during the first over for stability
     if balls_so_far < 6:
         blending_factor = (6 - balls_so_far) / 6.0
         final_prob = (blending_factor * 0.5) + ((1 - blending_factor) * final_prob)
@@ -211,7 +211,9 @@ if 'simulation_started' in st.session_state and st.session_state.simulation_star
                 current_rr = (runs_so_far * 6 / st.session_state.balls_so_far) if st.session_state.balls_so_far > 0 else 0
                 required_rr = (st.session_state.runs_left * 6 / balls_left) if balls_left > 0 else 0
                 
-                state__df = pd.DataFrame([{
+                # --- THIS IS THE FIX ---
+                # Changed state__df to state_df
+                state_df = pd.DataFrame([{
                     'batting_team': team_encoding.get(st.session_state.batting_team),
                     'bowling_team': team_encoding.get(st.session_state.bowling_team),
                     'venue': venue_encoding.get(st.session_state.venue),
