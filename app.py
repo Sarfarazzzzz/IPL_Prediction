@@ -18,12 +18,12 @@ def load_model():
 
 @st.cache_data
 def load_data():
-    """Loads pre-processed data and the matchup odds lookup table."""
+    """Loads pre-processed data and the definitive smart start lookup table."""
     try:
         matches = pd.read_csv("matches.csv")
-        matchup_odds = pd.read_csv("matchup_odds.csv")
+        smart_start_lookup = pd.read_csv("smart_start_lookup.csv")
     except FileNotFoundError:
-        st.error("Required data files not found. Ensure 'matches.csv' and 'matchup_odds.csv' are in your repository.")
+        st.error("Required data files not found. Ensure 'matches.csv' and 'smart_start_lookup.csv' are in your repository.")
         return None, None
 
     # Data Cleaning
@@ -49,11 +49,11 @@ def load_data():
     matches['venue'] = matches['venue'].replace(venue_mapping)
     matches['city'] = matches['city'].replace(city_mapping)
 
-    return matches, matchup_odds
+    return matches, smart_start_lookup
 
 # --- Load Assets ---
 model = load_model()
-matches_df, matchup_odds = load_data()
+matches_df, smart_start_lookup = load_data()
 
 if model is None or matches_df is None:
     st.stop()
@@ -73,13 +73,11 @@ def predict_probability(state_df):
     balls_left = state_df['balls_left'].iloc[0]
     required_rr = state_df['required_run_rate'].iloc[0]
 
-    # 1. Hard Rules for Game Over Scenarios
     if wickets_left <= 0 and runs_left > 0: return 0.0
     if balls_left <= 0 and runs_left > 0: return 0.0
     if required_rr > 40: return 0.0
     if runs_left <= 0: return 1.0
 
-    # 2. Get the Raw Prediction from the ML Model
     over = state_df['balls_so_far'].iloc[0] / 6
     state_df['phase_Middle'] = 1 if 6 < over <= 15 else 0
     state_df['phase_Death'] = 1 if over > 15 else 0
@@ -97,7 +95,6 @@ def predict_probability(state_df):
     predict_df.replace([np.inf, -np.inf], 999, inplace=True)
     raw_prob = model.predict_proba(predict_df)[0][1]
 
-    # 3. Apply Confidence Multiplier for Low-Wicket Scenarios
     if wickets_left <= 3:
         confidence_multipliers = {1: 0.5, 2: 0.75, 3: 0.9}
         multiplier = confidence_multipliers.get(wickets_left, 1.0)
@@ -110,7 +107,7 @@ def predict_probability(state_df):
 # --- UI Layout ---
 st.set_page_config(page_title="IPL Live Win Predictor", page_icon="🏏", layout="wide")
 st.title("🏏 IPL Live Match Win Predictor")
-st.markdown("A smart, matchup-aware starting probability that transitions to a powerful, in-game prediction model.")
+st.markdown("A smart, context-aware predictor using a hybrid of historical data and live machine learning.")
 
 with st.sidebar:
     st.header("⚙️ Match Setup")
@@ -134,20 +131,40 @@ with st.sidebar:
         st.session_state.venue = venue
         st.session_state.selected_city = selected_city
         
+        # --- Definitive Smart Initial Probability with Fallback ---
+        bins = [0, 140, 160, 180, 200, 220, 300]
+        labels = ['<140', '140-159', '160-179', '180-199', '200-219', '>220']
+        target_bin = pd.cut([target_runs], bins=bins, labels=labels)[0]
+        
         try:
-            prob_row = matchup_odds[
-                (matchup_odds['venue'] == venue) &
-                (matchup_odds['batting_team'] == batting_team) &
-                (matchup_odds['bowling_team'] == bowling_team)
+            # 1. Try for the most specific case: venue, matchup, and target
+            prob_row = smart_start_lookup[
+                (smart_start_lookup['venue'] == venue) &
+                (smart_start_lookup['batting_team'] == batting_team) &
+                (smart_start_lookup['bowling_team'] == bowling_team) &
+                (smart_start_lookup['target_bin'] == target_bin)
             ]
             initial_prob = prob_row['chase_win'].values[0]
+            st.success(f"Initial probability based on hyper-specific historical data.")
         except (IndexError, KeyError):
-            initial_prob = 0.50 
-        
+            try:
+                # 2. Fallback: If specific matchup not found, use venue and target bin
+                prob_row = smart_start_lookup[
+                    (smart_start_lookup['venue'] == venue) &
+                    (smart_start_lookup['target_bin'] == target_bin)
+                ]
+                initial_prob = prob_row['chase_win'].mean() # Average for that venue/target
+                st.warning("No specific matchup history found. Using venue/target average.")
+            except (IndexError, KeyError):
+                # 3. Final Fallback: If no data at all, use 50%
+                initial_prob = 0.50
+                st.error("No historical data for this scenario. Starting at 50%.")
+
         st.session_state.probabilities = [initial_prob]
         st.session_state.overs_history = [0.0]
 
 if 'simulation_started' in st.session_state and st.session_state.simulation_started:
+    # ... (The rest of your UI code for displaying metrics, expanders, and plots remains the same) ...
     st.header("Current Match State")
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Target", st.session_state.target)
