@@ -18,15 +18,14 @@ def load_model():
 
 @st.cache_data
 def load_data():
-    """Loads pre-processed data and the matchup odds lookup table."""
+    """Loads and cleans the base matches data."""
     try:
         matches = pd.read_csv("matches.csv")
-        matchup_odds = pd.read_csv("matchup_odds.csv")
     except FileNotFoundError:
-        st.error("Required data files not found. Ensure 'matches.csv' and 'matchup_odds.csv' are in your repository.")
-        return None, None
+        st.error("Required data file 'matches.csv' not found.")
+        return None
 
-    # Data Cleaning
+    # Data Cleaning (as you had it)
     team_name_mapping = {
         'Delhi Daredevils': 'Delhi Capitals', 'Kings XI Punjab': 'Punjab Kings',
         'Deccan Chargers': 'Sunrisers Hyderabad', 'Rising Pune Supergiant': 'Rising Pune Supergiants',
@@ -49,11 +48,11 @@ def load_data():
     matches['venue'] = matches['venue'].replace(venue_mapping)
     matches['city'] = matches['city'].replace(city_mapping)
 
-    return matches, matchup_odds
+    return matches
 
 # --- Load Assets ---
 model = load_model()
-matches_df, matchup_odds = load_data()
+matches_df = load_data()
 
 if model is None or matches_df is None:
     st.stop()
@@ -71,46 +70,50 @@ def predict_probability(state_df):
     wickets_left = state_df['wickets_left'].iloc[0]
     runs_left = state_df['runs_left'].iloc[0]
     balls_left = state_df['balls_left'].iloc[0]
-    required_rr = state_df['required_run_rate'].iloc[0]
+    
+    # Ensure runs_left doesn't go below zero for calculation
+    if runs_left <= 0:
+        return 1.0
+
+    required_rr = (runs_left * 6 / balls_left) if balls_left > 0 else 999
 
     # 1. Hard Rules for Game Over Scenarios
-    if wickets_left <= 0 and runs_left > 0: return 0.0
-    if balls_left <= 0 and runs_left > 0: return 0.0
+    if wickets_left <= 0: return 0.0
+    if balls_left <= 0: return 0.0
     if required_rr > 40: return 0.0
-    if runs_left <= 0: return 1.0
-
-    # 2. Get the Raw Prediction from the ML Model
+    
+    # 2. Prepare features and get the raw prediction from the ML Model
     over = state_df['balls_so_far'].iloc[0] / 6
     state_df['phase_Middle'] = 1 if 6 < over <= 15 else 0
     state_df['phase_Death'] = 1 if over > 15 else 0
     state_df['wicket_pressure'] = state_df['required_run_rate'] * (11 - state_df['wickets_left'])
     state_df['danger_index'] = state_df['required_run_rate'] / (state_df['wickets_left'] + 0.1)
-    
+
     feature_order = [
         'batting_team', 'bowling_team', 'venue', 'balls_so_far', 'balls_left',
         'total_runs_so_far', 'runs_left', 'current_run_rate', 'required_run_rate',
         'wickets_left', 'run_rate_diff', 'is_home_team', 'phase_Middle',
         'phase_Death', 'wicket_pressure', 'danger_index'
     ]
-    
+
     predict_df = state_df[feature_order]
     predict_df.replace([np.inf, -np.inf], 999, inplace=True)
     raw_prob = model.predict_proba(predict_df)[0][1]
 
-    # 3. Apply Confidence Multiplier for Low-Wicket Scenarios
+    # 3. Apply Confidence Multiplier for low-wicket scenarios
     if wickets_left <= 3:
         confidence_multipliers = {1: 0.5, 2: 0.75, 3: 0.9}
         multiplier = confidence_multipliers.get(wickets_left, 1.0)
         final_prob = raw_prob * multiplier
     else:
         final_prob = raw_prob
-        
+
     return final_prob
 
 # --- UI Layout ---
 st.set_page_config(page_title="IPL Live Win Predictor", page_icon="🏏", layout="wide")
 st.title("🏏 IPL Live Match Win Predictor")
-st.markdown("A smart, matchup-aware starting probability that transitions to a powerful, in-game prediction model.")
+st.markdown("A smart, model-driven starting probability that adapts with every ball of the match.")
 
 with st.sidebar:
     st.header("⚙️ Match Setup")
@@ -133,21 +136,34 @@ with st.sidebar:
         st.session_state.bowling_team = bowling_team
         st.session_state.venue = venue
         st.session_state.selected_city = selected_city
+
+        # --- FIX: Calculate Initial Probability using the Model ---
+        required_rr_initial = (target_runs * 6) / 120 if 120 > 0 else 0
         
-        try:
-            prob_row = matchup_odds[
-                (matchup_odds['venue'] == venue) &
-                (matchup_odds['batting_team'] == batting_team) &
-                (matchup_odds['bowling_team'] == bowling_team)
-            ]
-            initial_prob = prob_row['chase_win'].values[0]
-        except (IndexError, KeyError):
-            initial_prob = 0.50 
+        initial_state_df = pd.DataFrame([{
+            'batting_team': team_encoding.get(batting_team),
+            'bowling_team': team_encoding.get(bowling_team),
+            'venue': venue_encoding.get(venue),
+            'balls_so_far': 0,
+            'balls_left': 120,
+            'total_runs_so_far': 0,
+            'runs_left': target_runs,
+            'current_run_rate': 0.0,
+            'required_run_rate': required_rr_initial,
+            'wickets_left': 10,
+            'run_rate_diff': 0.0 - required_rr_initial,
+            'is_home_team': 1 if batting_team == home_team_map.get(selected_city) else 0
+        }])
+        
+        initial_prob = predict_probability(initial_state_df)
         
         st.session_state.probabilities = [initial_prob]
         st.session_state.overs_history = [0.0]
+        st.rerun()
 
 if 'simulation_started' in st.session_state and st.session_state.simulation_started:
+    # --- The rest of your UI code remains largely the same ---
+    # (Displaying metrics, expander for jumping to a state, ball-by-ball input, and plot)
     st.header("Current Match State")
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Target", st.session_state.target)
@@ -187,8 +203,9 @@ if 'simulation_started' in st.session_state and st.session_state.simulation_star
                 'is_home_team': 1 if st.session_state.batting_team == home_team_map.get(st.session_state.selected_city) else 0
             }])
             
-            initial_prob = predict_probability(state_df)
-            st.session_state.probabilities = [initial_prob]
+            # Recalculate probability from this custom point
+            prob_at_jump = predict_probability(state_df)
+            st.session_state.probabilities = [prob_at_jump] # Reset history to this point
             st.session_state.overs_history = [st.session_state.balls_so_far / 6]
             st.rerun()
 
@@ -233,10 +250,9 @@ if 'simulation_started' in st.session_state and st.session_state.simulation_star
                 st.session_state.probabilities.append(win_prob)
                 st.session_state.overs_history.append(st.session_state.balls_so_far / 6)
                 st.rerun()
-
     with plot_col:
         st.subheader("Win Probability Chart")
-        if 'probabilities' in st.session_state and st.session_state.probabilities:
+        if 'probabilities' in st.session_state and len(st.session_state.probabilities) > 0:
             fig, ax = plt.subplots(figsize=(10, 6))
             batting_team_probs = np.array(st.session_state.probabilities)
             bowling_team_probs = 1 - batting_team_probs
@@ -252,7 +268,5 @@ if 'simulation_started' in st.session_state and st.session_state.simulation_star
             
             final_prob = batting_team_probs[-1] * 100
             st.metric(label=f"**{st.session_state.batting_team}'s Current Win Probability**", value=f"{final_prob:.2f}%")
-
 else:
     st.info("Setup a match in the sidebar and click 'Start / Reset Simulation' to begin.")
-
