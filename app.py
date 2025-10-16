@@ -67,27 +67,48 @@ all_venues = sorted(matches_df['venue'].dropna().unique())
 venue_encoding = {venue: i for i, venue in enumerate(all_venues)}
 home_team_map = matches_df.groupby('city')['team1'].agg(lambda x: x.value_counts().index[0]).to_dict()
 
-# --- Prediction Function with Moderated Features ---
+# --- Prediction Function with Momentum-Adjusted Powerplay ---
 def predict_probability(state_df):
-    """Predicts win probability by moderating volatile features."""
+    """Predicts win probability using a momentum heuristic for the powerplay."""
     balls_so_far = state_df['balls_so_far'].iloc[0]
-    
-    if balls_so_far <= 6:
-        return st.session_state.initial_prob
-
     wickets_left = state_df['wickets_left'].iloc[0]
     runs_left = state_df['runs_left'].iloc[0]
-    balls_left = state_df['balls_left'].iloc[0]
     
+    # --- The Definitive Fix: Momentum-Adjusted Powerplay ---
+    # Powerplay (first 6 overs, 36 balls)
+    if balls_so_far <= 36:
+        # Start with the base probability from the target
+        base_prob = st.session_state.initial_prob
+        
+        # Calculate momentum
+        par_run_rate = 9.0  # Aggressive par score for powerplay
+        par_score = (par_run_rate / 6) * balls_so_far
+        runs_scored = st.session_state.target - runs_left
+        
+        # Calculate a run difference against the par score
+        run_diff = runs_scored - par_score
+        
+        # Heavily penalize for wickets lost in the powerplay
+        wickets_fallen = 10 - wickets_left
+        momentum_score = run_diff - (wickets_fallen * 15)
+        
+        # Adjust the base probability based on momentum
+        momentum_adjustment = momentum_score * 0.005 # Adjust by 0.5% per momentum point
+        live_prob = base_prob + momentum_adjustment
+        
+        # Clip to ensure probability stays within a sensible 5% - 95% range
+        return np.clip(live_prob, 0.05, 0.95)
+
+    # --- After Powerplay: Use the full ML model ---
+    balls_left = state_df['balls_left'].iloc[0]
     if runs_left <= 0: return 1.0
     if wickets_left <= 0 or balls_left <= 0: return 0.0
     
     predict_df = state_df.copy()
     required_rr = predict_df['required_run_rate'].iloc[0]
 
-    # --- THE FIX: Moderate the feature calculations with square root ---
+    # Calculate and moderate original features
     predict_df['wicket_pressure'] = required_rr * np.sqrt(11 - wickets_left)
-    
     danger_val = required_rr / (wickets_left + 0.1)
     predict_df['danger_index'] = np.sqrt(danger_val) if danger_val > 0 else 0
     
@@ -102,7 +123,6 @@ def predict_probability(state_df):
         'phase_Death', 'wicket_pressure', 'danger_index'
     ]
     
-    # Ensure all columns the model was trained on are present
     final_predict_df = pd.DataFrame(columns=model.get_booster().feature_names)
     for col in feature_order:
          if col in final_predict_df.columns:
@@ -118,21 +138,13 @@ def predict_probability(state_df):
         confidence_multipliers = {1: 0.5, 2: 0.75, 3: 0.9}
         multiplier = confidence_multipliers.get(wickets_left, 1.0)
         model_prob *= multiplier
-
-    # Second Over: Blend for a smooth transition
-    if 6 < balls_so_far <= 12:
-        heuristic_prob = st.session_state.initial_prob
-        model_weight = (balls_so_far - 6) / 6.0
-        final_prob = ((1 - model_weight) * heuristic_prob) + (model_weight * model_prob)
-        return final_prob
     
-    else:
-        return model_prob
+    return model_prob
 
 # --- UI Layout ---
 st.set_page_config(page_title="IPL Live Win Predictor", page_icon="🏏", layout="wide")
 st.title("🏏 IPL Live Match Win Predictor")
-st.markdown("A stable, target-sensitive starting probability that transitions to a powerful in-game model.")
+st.markdown("A live, momentum-adjusted powerplay that transitions to a powerful in-game model.")
 
 with st.sidebar:
     st.header("⚙️ Match Setup")
