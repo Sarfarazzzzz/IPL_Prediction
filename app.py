@@ -131,35 +131,31 @@ with st.sidebar:
         st.session_state.venue = venue
         st.session_state.selected_city = selected_city
         
-        # --- Definitive Smart Initial Probability with Fallback ---
+        # --- Definitive Smart Initial Probability with Robust Fallback ---
         bins = [0, 140, 160, 180, 200, 220, 300]
         labels = ['<140', '140-159', '160-179', '180-199', '200-219', '>220']
         target_bin = pd.cut([target_runs], bins=bins, labels=labels)[0]
         
-        try:
-            # 1. Try for the most specific case: venue, matchup, and target
-            prob_row = smart_start_lookup[
+        initial_prob = 0.50 # Default fallback
+        
+        # 1. Try for the most specific case: venue, matchup, and target
+        prob_row = smart_start_lookup[
+            (smart_start_lookup['venue'] == venue) &
+            (smart_start_lookup['batting_team'] == batting_team) &
+            (smart_start_lookup['bowling_team'] == bowling_team) &
+            (smart_start_lookup['target_bin'] == target_bin)
+        ]
+        if not prob_row.empty:
+            initial_prob = prob_row['chase_win'].values[0]
+        else:
+            # 2. Fallback: If specific matchup not found, use venue and target bin
+            prob_row_fallback = smart_start_lookup[
                 (smart_start_lookup['venue'] == venue) &
-                (smart_start_lookup['batting_team'] == batting_team) &
-                (smart_start_lookup['bowling_team'] == bowling_team) &
                 (smart_start_lookup['target_bin'] == target_bin)
             ]
-            initial_prob = prob_row['chase_win'].values[0]
-            st.success(f"Initial probability based on hyper-specific historical data.")
-        except (IndexError, KeyError):
-            try:
-                # 2. Fallback: If specific matchup not found, use venue and target bin
-                prob_row = smart_start_lookup[
-                    (smart_start_lookup['venue'] == venue) &
-                    (smart_start_lookup['target_bin'] == target_bin)
-                ]
-                initial_prob = prob_row['chase_win'].mean() # Average for that venue/target
-                st.warning("No specific matchup history found. Using venue/target average.")
-            except (IndexError, KeyError):
-                # 3. Final Fallback: If no data at all, use 50%
-                initial_prob = 0.50
-                st.error("No historical data for this scenario. Starting at 50%.")
-
+            if not prob_row_fallback.empty:
+                initial_prob = prob_row_fallback['chase_win'].mean()
+        
         st.session_state.probabilities = [initial_prob]
         st.session_state.overs_history = [0.0]
 
