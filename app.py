@@ -67,13 +67,11 @@ all_venues = sorted(matches_df['venue'].dropna().unique())
 venue_encoding = {venue: i for i, venue in enumerate(all_venues)}
 home_team_map = matches_df.groupby('city')['team1'].agg(lambda x: x.value_counts().index[0]).to_dict()
 
-# --- Prediction Function with Blended Transition ---
+# --- Prediction Function with Feature Transformation ---
 def predict_probability(state_df):
-    """Predicts win probability with a blended transition from heuristic to model."""
+    """Predicts win probability by transforming outlier-prone features."""
     balls_so_far = state_df['balls_so_far'].iloc[0]
     
-    # --- The Final, Best Logic ---
-    # 1. First Over: Use the fixed, smart heuristic
     if balls_so_far <= 6:
         return st.session_state.initial_prob
 
@@ -81,27 +79,36 @@ def predict_probability(state_df):
     runs_left = state_df['runs_left'].iloc[0]
     balls_left = state_df['balls_left'].iloc[0]
     
-    # Hard Rules for Game Over
     if runs_left <= 0: return 1.0
     if wickets_left <= 0 or balls_left <= 0: return 0.0
-    required_rr = (runs_left * 6 / balls_left) if balls_left > 0 else 999
-    if required_rr > 40: return 0.0
     
-    # Get Raw Model Prediction
+    # Create a copy to avoid modifying the original DataFrame in session state
+    predict_df = state_df.copy()
+
+    # --- THE FIX: Calculate and then transform the features ---
+    required_rr = predict_df['required_run_rate'].iloc[0]
+    predict_df['wicket_pressure'] = required_rr * (11 - wickets_left)
+    predict_df['danger_index'] = required_rr / (wickets_left + 0.1)
+    
+    # Apply log transformation to tame extreme values
+    predict_df['wicket_pressure'] = np.log1p(predict_df['wicket_pressure'])
+    predict_df['danger_index'] = np.log1p(predict_df['danger_index'])
+    
     over = balls_so_far / 6
-    state_df['phase_Middle'] = 1 if 6 < over <= 15 else 0
-    state_df['phase_Death'] = 1 if over > 15 else 0
-    state_df['wicket_pressure'] = state_df['required_run_rate'] * (11 - state_df['wickets_left'])
-    state_df['danger_index'] = state_df['required_run_rate'] / (state_df['wickets_left'] + 0.1)
+    predict_df['phase_Middle'] = 1 if 6 < over <= 15 else 0
+    predict_df['phase_Death'] = 1 if over > 15 else 0
+    
     feature_order = [
         'batting_team', 'bowling_team', 'venue', 'balls_so_far', 'balls_left',
         'total_runs_so_far', 'runs_left', 'current_run_rate', 'required_run_rate',
         'wickets_left', 'run_rate_diff', 'is_home_team', 'phase_Middle',
         'phase_Death', 'wicket_pressure', 'danger_index'
     ]
-    predict_df = state_df[feature_order]
-    predict_df.replace([np.inf, -np.inf], 999, inplace=True)
-    model_prob = model.predict_proba(predict_df)[0][1]
+    
+    final_predict_df = predict_df[feature_order]
+    
+    final_predict_df.replace([np.inf, -np.inf], 999, inplace=True)
+    model_prob = model.predict_proba(final_predict_df)[0][1]
 
     # Apply Confidence Multiplier
     if wickets_left <= 3:
@@ -109,15 +116,13 @@ def predict_probability(state_df):
         multiplier = confidence_multipliers.get(wickets_left, 1.0)
         model_prob *= multiplier
 
-    # 2. Second Over: Blend the heuristic and the model
+    # Second Over: Blend for a smooth transition
     if 6 < balls_so_far <= 12:
         heuristic_prob = st.session_state.initial_prob
-        # Weight of the model's prediction increases with each ball in the 2nd over
         model_weight = (balls_so_far - 6) / 6.0
         final_prob = ((1 - model_weight) * heuristic_prob) + (model_weight * model_prob)
         return final_prob
     
-    # 3. Third Over Onwards: Use the pure model prediction
     else:
         return model_prob
 
@@ -266,4 +271,5 @@ if 'simulation_started' in st.session_state and st.session_state.simulation_star
             st.metric(label=f"**{st.session_state.batting_team}'s Current Win Probability**", value=f"{final_prob:.2f}%")
 else:
     st.info("Setup a match in the sidebar and click 'Start / Reset Simulation' to begin.")
+
 
