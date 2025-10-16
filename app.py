@@ -25,21 +25,36 @@ def load_data():
         st.error("Required data file 'matches.csv' not found.")
         return None
 
-    # Data Cleaning (as you had it)
+    # Data Cleaning
     team_name_mapping = {
         'Delhi Daredevils': 'Delhi Capitals', 'Kings XI Punjab': 'Punjab Kings',
         'Deccan Chargers': 'Sunrisers Hyderabad', 'Rising Pune Supergiant': 'Rising Pune Supergiants',
         'Royal Challengers Bengaluru': 'Royal Challengers Bangalore'
     }
+    
+    # --- FIX: Expanded venue mapping to consolidate duplicates ---
     venue_mapping = {
-        'M.Chinnaswamy Stadium': 'M Chinnaswamy Stadium', 'M Chinnaswamy Stadium, Bengaluru': 'M Chinnaswamy Stadium',
-        'Punjab Cricket Association Stadium, Mohali': 'Punjab Cricket Association IS Bindra Stadium', 'Punjab Cricket Association IS Bindra Stadium, Mohali': 'Punjab Cricket Association IS Bindra Stadium',
-        'Feroz Shah Kotla': 'Arun Jaitley Stadium', 'Arun Jaitley Stadium, Delhi': 'Arun Jaitley Stadium', 'Wankhede Stadium, Mumbai': 'Wankhede Stadium',
-        'Brabourne Stadium, Mumbai': 'Brabourne Stadium', 'Dr DY Patil Sports Academy, Mumbai': 'Dr DY Patil Sports Academy',
-        'Eden Gardens, Kolkata': 'Eden Gardens', 'Sawai Mansingh Stadium, Jaipur': 'Sawai Mansingh Stadium',
-        'Rajiv Gandhi International Stadium': 'Rajiv Gandhi International Stadium, Uppal', 'MA Chidambaram Stadium, Chepauk': 'MA Chidambaram Stadium',
-        'MA Chidambaram Stadium, Chepauk, Chennai': 'MA Chidambaram Stadium', 'Sardar Patel Stadium, Motera': 'Narendra Modi Stadium',
-        'Narendra Modi Stadium, Ahmedabad': 'Narendra Modi Stadium'
+        'M.Chinnaswamy Stadium': 'M Chinnaswamy Stadium',
+        'M Chinnaswamy Stadium, Bengaluru': 'M Chinnaswamy Stadium',
+        'Punjab Cricket Association Stadium, Mohali': 'Punjab Cricket Association IS Bindra Stadium',
+        'Punjab Cricket Association IS Bindra Stadium, Mohali': 'Punjab Cricket Association IS Bindra Stadium',
+        'Feroz Shah Kotla': 'Arun Jaitley Stadium',
+        'Arun Jaitley Stadium, Delhi': 'Arun Jaitley Stadium',
+        'Wankhede Stadium, Mumbai': 'Wankhede Stadium',
+        'Brabourne Stadium, Mumbai': 'Brabourne Stadium',
+        'Dr DY Patil Sports Academy, Mumbai': 'Dr DY Patil Sports Academy',
+        'Eden Gardens, Kolkata': 'Eden Gardens',
+        'Sawai Mansingh Stadium, Jaipur': 'Sawai Mansingh Stadium',
+        'MA Chidambaram Stadium, Chepauk': 'MA Chidambaram Stadium',
+        'MA Chidambaram Stadium, Chepauk, Chennai': 'MA Chidambaram Stadium',
+        'Sardar Patel Stadium, Motera': 'Narendra Modi Stadium',
+        'Narendra Modi Stadium, Ahmedabad': 'Narendra Modi Stadium',
+        'Rajiv Gandhi International Stadium, Uppal': 'Rajiv Gandhi International Stadium',
+        'Rajiv Gandhi International Stadium, Uppal, Hyderabad': 'Rajiv Gandhi International Stadium',
+        'Zayed Cricket Stadium, Abu Dhabi': 'Zayed Cricket Stadium',
+        'Himachal Pradesh Cricket Association Stadium, Dharamsala': 'Himachal Pradesh Cricket Association Stadium',
+        'Maharashtra Cricket Association Stadium, Pune': 'Maharashtra Cricket Association Stadium',
+        'Dr. Y.S. Rajasekhara Reddy ACA-VDCA Cricket Stadium, Visakhapatnam': 'Dr. Y.S. Rajasekhara Reddy ACA-VDCA Cricket Stadium'
     }
     city_mapping = {'Bangalore': 'Bengaluru'}
 
@@ -71,18 +86,12 @@ def predict_probability(state_df):
     runs_left = state_df['runs_left'].iloc[0]
     balls_left = state_df['balls_left'].iloc[0]
     
-    # Ensure runs_left doesn't go below zero for calculation
-    if runs_left <= 0:
-        return 1.0
-
+    if runs_left <= 0: return 1.0
+    if wickets_left <= 0 or balls_left <= 0: return 0.0
+    
     required_rr = (runs_left * 6 / balls_left) if balls_left > 0 else 999
-
-    # 1. Hard Rules for Game Over Scenarios
-    if wickets_left <= 0: return 0.0
-    if balls_left <= 0: return 0.0
     if required_rr > 40: return 0.0
     
-    # 2. Prepare features and get the raw prediction from the ML Model
     over = state_df['balls_so_far'].iloc[0] / 6
     state_df['phase_Middle'] = 1 if 6 < over <= 15 else 0
     state_df['phase_Death'] = 1 if over > 15 else 0
@@ -100,7 +109,6 @@ def predict_probability(state_df):
     predict_df.replace([np.inf, -np.inf], 999, inplace=True)
     raw_prob = model.predict_proba(predict_df)[0][1]
 
-    # 3. Apply Confidence Multiplier for low-wicket scenarios
     if wickets_left <= 3:
         confidence_multipliers = {1: 0.5, 2: 0.75, 3: 0.9}
         multiplier = confidence_multipliers.get(wickets_left, 1.0)
@@ -113,7 +121,7 @@ def predict_probability(state_df):
 # --- UI Layout ---
 st.set_page_config(page_title="IPL Live Win Predictor", page_icon="🏏", layout="wide")
 st.title("🏏 IPL Live Match Win Predictor")
-st.markdown("A smart, model-driven starting probability that adapts with every ball of the match.")
+st.markdown("A 50/50 starting probability that transitions to a powerful, in-game prediction model.")
 
 with st.sidebar:
     st.header("⚙️ Match Setup")
@@ -137,33 +145,14 @@ with st.sidebar:
         st.session_state.venue = venue
         st.session_state.selected_city = selected_city
 
-        # --- FIX: Calculate Initial Probability using the Model ---
-        required_rr_initial = (target_runs * 6) / 120 if 120 > 0 else 0
-        
-        initial_state_df = pd.DataFrame([{
-            'batting_team': team_encoding.get(batting_team),
-            'bowling_team': team_encoding.get(bowling_team),
-            'venue': venue_encoding.get(venue),
-            'balls_so_far': 0,
-            'balls_left': 120,
-            'total_runs_so_far': 0,
-            'runs_left': target_runs,
-            'current_run_rate': 0.0,
-            'required_run_rate': required_rr_initial,
-            'wickets_left': 10,
-            'run_rate_diff': 0.0 - required_rr_initial,
-            'is_home_team': 1 if batting_team == home_team_map.get(selected_city) else 0
-        }])
-        
-        initial_prob = predict_probability(initial_state_df)
+        initial_prob = 0.5
         
         st.session_state.probabilities = [initial_prob]
         st.session_state.overs_history = [0.0]
         st.rerun()
 
+# --- The rest of the UI code is unchanged ---
 if 'simulation_started' in st.session_state and st.session_state.simulation_started:
-    # --- The rest of your UI code remains largely the same ---
-    # (Displaying metrics, expander for jumping to a state, ball-by-ball input, and plot)
     st.header("Current Match State")
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Target", st.session_state.target)
@@ -203,9 +192,8 @@ if 'simulation_started' in st.session_state and st.session_state.simulation_star
                 'is_home_team': 1 if st.session_state.batting_team == home_team_map.get(st.session_state.selected_city) else 0
             }])
             
-            # Recalculate probability from this custom point
             prob_at_jump = predict_probability(state_df)
-            st.session_state.probabilities = [prob_at_jump] # Reset history to this point
+            st.session_state.probabilities = [prob_at_jump]
             st.session_state.overs_history = [st.session_state.balls_so_far / 6]
             st.rerun()
 
@@ -250,6 +238,7 @@ if 'simulation_started' in st.session_state and st.session_state.simulation_star
                 st.session_state.probabilities.append(win_prob)
                 st.session_state.overs_history.append(st.session_state.balls_so_far / 6)
                 st.rerun()
+                
     with plot_col:
         st.subheader("Win Probability Chart")
         if 'probabilities' in st.session_state and len(st.session_state.probabilities) > 0:
