@@ -13,114 +13,97 @@ def load_model():
             model = pickle.load(f)
         return model
     except FileNotFoundError:
-        st.error("Model file 'xgb_model.pkl' not found. Please ensure it's in the same directory.")
+        st.error("Model file 'xgb_model.pkl' not found. Please ensure it's in your repository.")
         return None
 
 @st.cache_data
 def load_data():
-    """Loads and preprocesses the IPL matches dataset."""
+    """
+    Loads pre-processed match data and the pre-computed historical odds lookup table.
+    """
     try:
-        matches_df = pd.read_csv("matches.csv")
+        matches = pd.read_csv("matches.csv")
+        initial_prob_lookup = pd.read_csv("initial_prob_lookup.csv")
     except FileNotFoundError:
-        st.error("Matches file 'matches.csv' not found. Please ensure it's in the same directory.")
-        return None
-    
-    # --- Data Cleaning and Mapping ---
+        st.error("Required data files ('matches.csv', 'initial_prob_lookup.csv') not found. Please ensure they are in your repository.")
+        return None, None
+
+    # --- Data Cleaning ---
     team_name_mapping = {
-        'Delhi Daredevils': 'Delhi Capitals', 'Kings XI Punjab': 'Punjab Kings', 
-        'Deccan Chargers': 'Sunrisers Hyderabad', 'Rising Pune Supergiant': 'Rising Pune Supergiants', 
+        'Delhi Daredevils': 'Delhi Capitals', 'Kings XI Punjab': 'Punjab Kings',
+        'Deccan Chargers': 'Sunrisers Hyderabad', 'Rising Pune Supergiant': 'Rising Pune Supergiants',
         'Royal Challengers Bengaluru': 'Royal Challengers Bangalore'
     }
-    team_cols = ['team1', 'team2', 'toss_winner', 'winner']
-    for col in team_cols:
-        matches_df[col] = matches_df[col].replace(team_name_mapping)
-    
     venue_mapping = {
-        'M.Chinnaswamy Stadium': 'M Chinnaswamy Stadium', 'M Chinnaswamy Stadium, Bengaluru': 'M Chinnaswamy Stadium', 
-        'Punjab Cricket Association Stadium, Mohali': 'Punjab Cricket Association IS Bindra Stadium', 'Punjab Cricket Association IS Bindra Stadium, Mohali': 'Punjab Cricket Association IS Bindra Stadium', 
-        'Feroz Shah Kotla': 'Arun Jaitley Stadium', 'Arun Jaitley Stadium, Delhi': 'Arun Jaitley Stadium', 'Wankhede Stadium, Mumbai': 'Wankhede Stadium', 
-        'Brabourne Stadium, Mumbai': 'Brabourne Stadium', 'Dr DY Patil Sports Academy, Mumbai': 'Dr DY Patil Sports Academy', 
-        'Eden Gardens, Kolkata': 'Eden Gardens', 'Sawai Mansingh Stadium, Jaipur': 'Sawai Mansingh Stadium', 
-        'Rajiv Gandhi International Stadium': 'Rajiv Gandhi International Stadium, Uppal', 'MA Chidambaram Stadium, Chepauk': 'MA Chidambaram Stadium', 
-        'MA Chidambaram Stadium, Chepauk, Chennai': 'MA Chidambaram Stadium', 'Sardar Patel Stadium, Motera': 'Narendra Modi Stadium', 
+        'M.Chinnaswamy Stadium': 'M Chinnaswamy Stadium', 'M Chinnaswamy Stadium, Bengaluru': 'M Chinnaswamy Stadium',
+        'Punjab Cricket Association Stadium, Mohali': 'Punjab Cricket Association IS Bindra Stadium', 'Punjab Cricket Association IS Bindra Stadium, Mohali': 'Punjab Cricket Association IS Bindra Stadium',
+        'Feroz Shah Kotla': 'Arun Jaitley Stadium', 'Arun Jaitley Stadium, Delhi': 'Arun Jaitley Stadium', 'Wankhede Stadium, Mumbai': 'Wankhede Stadium',
+        'Brabourne Stadium, Mumbai': 'Brabourne Stadium', 'Dr DY Patil Sports Academy, Mumbai': 'Dr DY Patil Sports Academy',
+        'Eden Gardens, Kolkata': 'Eden Gardens', 'Sawai Mansingh Stadium, Jaipur': 'Sawai Mansingh Stadium',
+        'Rajiv Gandhi International Stadium': 'Rajiv Gandhi International Stadium, Uppal', 'MA Chidambaram Stadium, Chepauk': 'MA Chidambaram Stadium',
+        'MA Chidambaram Stadium, Chepauk, Chennai': 'MA Chidambaram Stadium', 'Sardar Patel Stadium, Motera': 'Narendra Modi Stadium',
         'Narendra Modi Stadium, Ahmedabad': 'Narendra Modi Stadium'
     }
-    matches_df['venue'] = matches_df['venue'].replace(venue_mapping)
-    
     city_mapping = {'Bangalore': 'Bengaluru'}
-    matches_df['city'] = matches_df['city'].replace(city_mapping)
-    
-    return matches_df
+
+    for col in ['team1', 'team2', 'toss_winner', 'winner']:
+        matches[col] = matches[col].replace(team_name_mapping)
+    matches['venue'] = matches['venue'].replace(venue_mapping)
+    matches['city'] = matches['city'].replace(city_mapping)
+
+    return matches, initial_prob_lookup
 
 # --- Load Assets ---
 model = load_model()
-matches_df = load_data()
+matches_df, initial_prob_lookup = load_data()
 
 if model is None or matches_df is None:
     st.stop()
 
-# --- Pre-computation for UI elements ---
+# --- Pre-computation for UI ---
 all_teams = sorted(matches_df['team1'].dropna().unique())
 team_encoding = {team: i for i, team in enumerate(all_teams)}
-all_venues = sorted(matches_df['venue'].dropna().unique())
 venue_encoding = {venue: i for i, venue in enumerate(all_venues)}
 home_team_map = matches_df.groupby('city')['team1'].agg(lambda x: x.value_counts().index[0]).to_dict()
 
-# --- Prediction Function (Updated) ---
+# --- Prediction Function ---
 def predict_probability(state_df):
-    """Predicts the win probability based on the current match state DataFrame."""
-    # This function now expects a DataFrame that already has all the raw features.
-
+    """
+    Predicts win probability, including hard rules for game-over scenarios.
+    """
     wickets_left = state_df['wickets_left'].iloc[0]
     runs_left = state_df['runs_left'].iloc[0]
     balls_left = state_df['balls_left'].iloc[0]
     required_rr = state_df['required_run_rate'].iloc[0]
 
-    # --- Rule 1: Wickets are all gone ---
-    if wickets_left <= 0 and runs_left > 0:
-        return 0.0
-    
-    # --- Rule 2: Balls have run out ---
-    if balls_left <= 0 and runs_left > 0:
-        return 0.0
-        
-    # --- FIX: Rule 3: Required run rate is impossible ---
-    # A required rate of 36 means a six is needed on every ball.
-    if required_rr > 40:
-        return 0.0
+    if wickets_left <= 0 and runs_left > 0: return 0.0
+    if balls_left <= 0 and runs_left > 0: return 0.0
+    if required_rr > 40: return 0.0
+    if runs_left <= 0: return 1.0
 
-    # --- Rule 4: The batting team has already won ---
-    if runs_left <= 0:
-        return 1.0
-    
-    # Calculate derived features
     over = state_df['balls_so_far'].iloc[0] / 6
     state_df['phase_Middle'] = 1 if 6 < over <= 15 else 0
     state_df['phase_Death'] = 1 if over > 15 else 0
     state_df['wicket_pressure'] = state_df['required_run_rate'] * (11 - state_df['wickets_left'])
     state_df['danger_index'] = state_df['required_run_rate'] / (state_df['wickets_left'] + 0.1)
     
-    # Ensure the final feature order matches the model's training order
     feature_order = [
         'batting_team', 'bowling_team', 'venue', 'balls_so_far', 'balls_left',
         'total_runs_so_far', 'runs_left', 'current_run_rate', 'required_run_rate',
-        'wickets_left', 'run_rate_diff', 'is_home_team', 'phase_Middle', 
+        'wickets_left', 'run_rate_diff', 'is_home_team', 'phase_Middle',
         'phase_Death', 'wicket_pressure', 'danger_index'
     ]
-    state_df = state_df[feature_order]
-
-    # Handle any potential infinite values
-    state_df.replace([np.inf, -np.inf], 999, inplace=True)
     
-    return model.predict_proba(state_df)[0][1]
+    # Ensure the DataFrame for prediction has the correct column order
+    predict_df = state_df[feature_order]
 
-# --- Streamlit UI ---
+    predict_df.replace([np.inf, -np.inf], 999, inplace=True)
+    return model.predict_proba(predict_df)[0][1]
+
+# --- UI Layout ---
 st.set_page_config(page_title="IPL Live Win Predictor", page_icon="🏏", layout="wide")
 st.title("🏏 IPL Live Match Win Predictor")
 st.markdown("Simulate a match ball-by-ball or jump to any point in the chase.")
-
-# (Sidebar code remains the same...)
-# --- REPLACE THIS BLOCK IN YOUR app.py ---
 
 with st.sidebar:
     st.header("⚙️ Match Setup")
@@ -128,15 +111,12 @@ with st.sidebar:
     bowling_team = st.selectbox("Select Bowling Team", [t for t in all_teams if t != batting_team])
     sorted_cities = sorted(matches_df['city'].dropna().unique())
     selected_city = st.selectbox("Select City", sorted_cities)
-    possible_venues = sorted(matches_df[matches_df['city'] == selected_city]['venue'].unique())
+    possible_venues = sorted(matches_df[matches_df['city'] == selected_city]['venue'].dropna().unique())
     venue = st.selectbox("Select Venue", possible_venues)
     target_runs = st.number_input("Target Runs to Win", min_value=1, max_value=400, value=180)
 
     if st.button("Start / Reset Simulation", type="primary"):
-        # Clear any previous simulation data
         st.session_state.clear()
-        
-        # Initialize the match state
         st.session_state.simulation_started = True
         st.session_state.target = target_runs
         st.session_state.runs_left = target_runs
@@ -145,39 +125,22 @@ with st.sidebar:
         st.session_state.batting_team = batting_team
         st.session_state.bowling_team = bowling_team
         
-        # Store encoded values for prediction
-        st.session_state.batting_team_enc = team_encoding.get(batting_team)
-        st.session_state.bowling_team_enc = team_encoding.get(bowling_team)
-        st.session_state.venue_enc = venue_encoding.get(venue)
-        st.session_state.is_home_team = 1 if batting_team == home_team_map.get(selected_city) else 0
-
-        # --- NEW: Calculate and Display Initial Probability ---
-        # Calculate the required run rate at the start of the innings (0 balls bowled)
-        initial_rrr = (st.session_state.target * 6) / 120
-
-        # Create the DataFrame for the very first prediction
-        initial_state_df = pd.DataFrame([{
-            'batting_team': st.session_state.batting_team_enc,
-            'bowling_team': st.session_state.bowling_team_enc,
-            'venue': st.session_state.venue_enc,
-            'balls_so_far': 0,
-            'balls_left': 120,
-            'total_runs_so_far': 0,
-            'runs_left': st.session_state.target,
-            'current_run_rate': 0.0,
-            'required_run_rate': initial_rrr,
-            'wickets_left': 10,
-            'run_rate_diff': 0.0 - initial_rrr,
-            'is_home_team': st.session_state.is_home_team
-        }])
+        # --- Smart Initial Probability Logic ---
+        bins = [0, 140, 160, 180, 200, 220, 300]
+        labels = ['<140', '140-159', '160-179', '180-199', '200-219', '>220']
+        target_bin = pd.cut([target_runs], bins=bins, labels=labels)[0]
         
-        # Get the initial prediction from the model
-        initial_prob = predict_probability(initial_state_df)
+        try:
+            prob_row = initial_prob_lookup[
+                (initial_prob_lookup['venue'] == venue) &
+                (initial_prob_lookup['target_bin'] == target_bin)
+            ]
+            initial_prob = prob_row['chase_win'].values[0]
+        except (IndexError, KeyError):
+            initial_prob = 0.50 # Fallback if no historical data
         
-        # Initialize the history lists with the starting values
         st.session_state.probabilities = [initial_prob]
         st.session_state.overs_history = [0.0]
-
 
 if 'simulation_started' in st.session_state and st.session_state.simulation_started:
     st.header("Current Match State")
@@ -191,7 +154,7 @@ if 'simulation_started' in st.session_state and st.session_state.simulation_star
         override_cols = st.columns(3)
         over_input = override_cols[0].number_input("Overs Bowled:", min_value=0, max_value=20, value=int(st.session_state.balls_so_far / 6), step=1)
         ball_input = override_cols[0].number_input("Balls in Over:", min_value=0, max_value=5, value=st.session_state.balls_so_far % 6, step=1)
-        runs_left_input = override_cols[1].number_input("Set Runs Left:", min_value=1, max_value=st.session_state.target, value=st.session_state.runs_left)
+        runs_left_input = override_cols[1].number_input("Set Runs Left:", min_value=0, max_value=st.session_state.target, value=st.session_state.runs_left)
         wickets_left_input = override_cols[2].number_input("Set Wickets Left:", min_value=0, max_value=10, value=st.session_state.wickets_left)
 
         if st.button("Apply Custom State"):
@@ -204,20 +167,24 @@ if 'simulation_started' in st.session_state and st.session_state.simulation_star
             current_rr = (runs_so_far * 6 / st.session_state.balls_so_far) if st.session_state.balls_so_far > 0 else 0
             required_rr = (st.session_state.runs_left * 6 / balls_left) if balls_left > 0 else 0
             
-            # --- FIX: Create a DataFrame with all necessary columns ---
             initial_state_df = pd.DataFrame([{
-                'batting_team': st.session_state.batting_team_enc, 'bowling_team': st.session_state.bowling_team_enc,
-                'venue': st.session_state.venue_enc, 'balls_so_far': st.session_state.balls_so_far,
-                'balls_left': balls_left, 'total_runs_so_far': runs_so_far, 'runs_left': st.session_state.runs_left,
-                'current_run_rate': current_rr, 'required_run_rate': required_rr,
-                'wickets_left': st.session_state.wickets_left, 'run_rate_diff': current_rr - required_rr,
-                'is_home_team': st.session_state.is_home_team
+                'batting_team': team_encoding.get(st.session_state.batting_team),
+                'bowling_team': team_encoding.get(st.session_state.bowling_team),
+                'venue': venue_encoding.get(venue),
+                'balls_so_far': st.session_state.balls_so_far,
+                'balls_left': balls_left,
+                'total_runs_so_far': runs_so_far,
+                'runs_left': st.session_state.runs_left,
+                'current_run_rate': current_rr,
+                'required_run_rate': required_rr,
+                'wickets_left': st.session_state.wickets_left,
+                'run_rate_diff': current_rr - required_rr,
+                'is_home_team': 1 if st.session_state.batting_team == home_team_map.get(selected_city) else 0
             }])
             
             initial_prob = predict_probability(initial_state_df)
             st.session_state.probabilities = [initial_prob]
             st.session_state.overs_history = [st.session_state.balls_so_far / 6]
-            st.success("Match state updated! Initial probability calculated.")
             st.rerun()
 
     st.divider()
@@ -242,14 +209,19 @@ if 'simulation_started' in st.session_state and st.session_state.simulation_star
                 current_rr = (runs_so_far * 6 / st.session_state.balls_so_far) if st.session_state.balls_so_far > 0 else 0
                 required_rr = (st.session_state.runs_left * 6 / balls_left) if balls_left > 0 else 0
                 
-                # --- FIX: Create a DataFrame with all necessary columns ---
                 current_state_df = pd.DataFrame([{
-                    'batting_team': st.session_state.batting_team_enc, 'bowling_team': st.session_state.bowling_team_enc,
-                    'venue': st.session_state.venue_enc, 'balls_so_far': st.session_state.balls_so_far,
-                    'balls_left': balls_left, 'total_runs_so_far': runs_so_far, 'runs_left': st.session_state.runs_left,
-                    'current_run_rate': current_rr, 'required_run_rate': required_rr,
-                    'wickets_left': st.session_state.wickets_left, 'run_rate_diff': current_rr - required_rr,
-                    'is_home_team': st.session_state.is_home_team
+                    'batting_team': team_encoding.get(st.session_state.batting_team),
+                    'bowling_team': team_encoding.get(st.session_state.bowling_team),
+                    'venue': venue_encoding.get(venue),
+                    'balls_so_far': st.session_state.balls_so_far,
+                    'balls_left': balls_left,
+                    'total_runs_so_far': runs_so_far,
+                    'runs_left': st.session_state.runs_left,
+                    'current_run_rate': current_rr,
+                    'required_run_rate': required_rr,
+                    'wickets_left': st.session_state.wickets_left,
+                    'run_rate_diff': current_rr - required_rr,
+                    'is_home_team': 1 if st.session_state.batting_team == home_team_map.get(selected_city) else 0
                 }])
                 
                 win_prob = predict_probability(current_state_df)
@@ -257,10 +229,9 @@ if 'simulation_started' in st.session_state and st.session_state.simulation_star
                 st.session_state.overs_history.append(st.session_state.balls_so_far / 6)
                 st.rerun()
 
-    # (Plotting code remains the same...)
     with plot_col:
         st.subheader("Win Probability Chart")
-        if st.session_state.probabilities:
+        if 'probabilities' in st.session_state and st.session_state.probabilities:
             fig, ax = plt.subplots(figsize=(10, 6))
             batting_team_probs = np.array(st.session_state.probabilities)
             bowling_team_probs = 1 - batting_team_probs
