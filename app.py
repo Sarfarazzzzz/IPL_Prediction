@@ -7,29 +7,26 @@ import numpy as np
 # --- Caching Functions ---
 @st.cache_resource
 def load_model():
-    """Loads the trained machine learning model from a pickle file."""
+    """Loads the venue-neutral, in-game prediction model."""
     try:
         with open("xgb_model.pkl", "rb") as f:
             model = pickle.load(f)
         return model
     except FileNotFoundError:
-        st.error("Model file 'xgb_model.pkl' not found. Please ensure it's in your repository.")
+        st.error("Model file 'xgb_model.pkl' not found.")
         return None
 
 @st.cache_data
 def load_data():
-    """
-    Loads pre-processed match data and the pre-computed lookup tables for historical odds and team strength.
-    """
+    """Loads pre-processed data and the matchup odds lookup table."""
     try:
         matches = pd.read_csv("matches.csv")
-        initial_prob_lookup = pd.read_csv("initial_prob_lookup.csv")
-        team_strength = pd.read_csv("team_strength.csv")
+        matchup_odds = pd.read_csv("matchup_odds.csv")
     except FileNotFoundError:
-        st.error("Required data files not found. Please ensure 'matches.csv', 'initial_prob_lookup.csv', and 'team_strength.csv' are in your repository.")
-        return None, None, None
+        st.error("Required data files not found. Ensure 'matches.csv' and 'matchup_odds.csv' are in your repository.")
+        return None, None
 
-    # --- Data Cleaning ---
+    # Data Cleaning
     team_name_mapping = {
         'Delhi Daredevils': 'Delhi Capitals', 'Kings XI Punjab': 'Punjab Kings',
         'Deccan Chargers': 'Sunrisers Hyderabad', 'Rising Pune Supergiant': 'Rising Pune Supergiants',
@@ -52,27 +49,22 @@ def load_data():
     matches['venue'] = matches['venue'].replace(venue_mapping)
     matches['city'] = matches['city'].replace(city_mapping)
 
-    return matches, initial_prob_lookup, team_strength
+    return matches, matchup_odds
 
 # --- Load Assets ---
 model = load_model()
-matches_df, initial_prob_lookup, team_strength = load_data()
+matches_df, matchup_odds = load_data()
 
-if model is None or matches_df is None or team_strength is None:
+if model is None or matches_df is None:
     st.stop()
 
 # --- Pre-computation for UI ---
 all_teams = sorted(matches_df['team1'].dropna().unique())
 team_encoding = {team: i for i, team in enumerate(all_teams)}
-all_venues = sorted(matches_df['venue'].dropna().unique())
-venue_encoding = {venue: i for i, venue in enumerate(all_venues)}
-home_team_map = matches_df.groupby('city')['team1'].agg(lambda x: x.value_counts().index[0]).to_dict()
 
-# --- Prediction Function ---
+# --- Prediction Function (Venue-Neutral) ---
 def predict_probability(state_df):
-    """
-    Predicts win probability, including hard rules for game-over scenarios.
-    """
+    """Predicts win probability using the venue-neutral in-game model."""
     wickets_left = state_df['wickets_left'].iloc[0]
     runs_left = state_df['runs_left'].iloc[0]
     balls_left = state_df['balls_left'].iloc[0]
@@ -90,10 +82,10 @@ def predict_probability(state_df):
     state_df['danger_index'] = state_df['required_run_rate'] / (state_df['wickets_left'] + 0.1)
     
     feature_order = [
-        'batting_team', 'bowling_team', 'venue', 'balls_so_far', 'balls_left',
+        'batting_team', 'bowling_team', 'balls_so_far', 'balls_left',
         'total_runs_so_far', 'runs_left', 'current_run_rate', 'required_run_rate',
-        'wickets_left', 'run_rate_diff', 'is_home_team', 'phase_Middle',
-        'phase_Death', 'wicket_pressure', 'danger_index'
+        'wickets_left', 'run_rate_diff', 'phase_Middle', 'phase_Death',
+        'wicket_pressure', 'danger_index'
     ]
     
     predict_df = state_df[feature_order]
@@ -103,7 +95,7 @@ def predict_probability(state_df):
 # --- UI Layout ---
 st.set_page_config(page_title="IPL Live Win Predictor", page_icon="🏏", layout="wide")
 st.title("🏏 IPL Live Match Win Predictor")
-st.markdown("Simulate a match ball-by-ball or jump to any point in the chase.")
+st.markdown("A smart, matchup-aware starting probability that transitions to an unbiased, in-game prediction model.")
 
 with st.sidebar:
     st.header("⚙️ Match Setup")
@@ -124,33 +116,22 @@ with st.sidebar:
         st.session_state.balls_so_far = 0
         st.session_state.batting_team = batting_team
         st.session_state.bowling_team = bowling_team
-        
-        # <<< FIX: Store UI selections in session_state for consistency >>>
         st.session_state.venue = venue
-        st.session_state.selected_city = selected_city
         
-        # --- Smart Initial Probability with Team Strength Adjustment ---
-        bins = [0, 140, 160, 180, 200, 220, 300]
-        labels = ['<140', '140-159', '160-179', '180-199', '200-219', '>220']
-        target_bin = pd.cut([target_runs], bins=bins, labels=labels)[0]
-        
+        # --- Hyper-Specific Smart Initial Probability ---
         try:
-            prob_row = initial_prob_lookup[
-                (initial_prob_lookup['venue'] == st.session_state.venue) &
-                (initial_prob_lookup['target_bin'] == target_bin)
+            # Look for the exact matchup at the specific venue
+            prob_row = matchup_odds[
+                (matchup_odds['venue'] == venue) &
+                (matchup_odds['batting_team'] == batting_team) &
+                (matchup_odds['bowling_team'] == bowling_team)
             ]
-            baseline_prob = prob_row['chase_win'].values[0]
+            initial_prob = prob_row['chase_win'].values[0]
+            st.success(f"Initial probability based on historical matchups at this venue.")
         except (IndexError, KeyError):
-            baseline_prob = 0.50
-        
-        try:
-            batting_strength = team_strength.loc[team_strength['team'] == batting_team, 'win_rate'].values[0]
-            bowling_strength = team_strength.loc[team_strength['team'] == bowling_team, 'win_rate'].values[0]
-            strength_diff = batting_strength - bowling_strength
-            adjustment = strength_diff / 2
-            initial_prob = np.clip(baseline_prob + adjustment, 0.05, 0.95)
-        except IndexError:
-            initial_prob = baseline_prob
+            # Fallback if this specific matchup has never happened at this venue
+            initial_prob = 0.50 
+            st.warning("No specific matchup history at this venue; starting at 50%.")
         
         st.session_state.probabilities = [initial_prob]
         st.session_state.overs_history = [0.0]
@@ -183,7 +164,6 @@ if 'simulation_started' in st.session_state and st.session_state.simulation_star
             initial_state_df = pd.DataFrame([{
                 'batting_team': team_encoding.get(st.session_state.batting_team),
                 'bowling_team': team_encoding.get(st.session_state.bowling_team),
-                'venue': venue_encoding.get(st.session_state.venue),
                 'balls_so_far': st.session_state.balls_so_far,
                 'balls_left': balls_left,
                 'total_runs_so_far': runs_so_far,
@@ -192,7 +172,6 @@ if 'simulation_started' in st.session_state and st.session_state.simulation_star
                 'required_run_rate': required_rr,
                 'wickets_left': st.session_state.wickets_left,
                 'run_rate_diff': current_rr - required_rr,
-                'is_home_team': 1 if st.session_state.batting_team == home_team_map.get(st.session_state.selected_city) else 0
             }])
             
             initial_prob = predict_probability(initial_state_df)
@@ -225,7 +204,6 @@ if 'simulation_started' in st.session_state and st.session_state.simulation_star
                 current_state_df = pd.DataFrame([{
                     'batting_team': team_encoding.get(st.session_state.batting_team),
                     'bowling_team': team_encoding.get(st.session_state.bowling_team),
-                    'venue': venue_encoding.get(st.session_state.venue),
                     'balls_so_far': st.session_state.balls_so_far,
                     'balls_left': balls_left,
                     'total_runs_so_far': runs_so_far,
@@ -234,7 +212,6 @@ if 'simulation_started' in st.session_state and st.session_state.simulation_star
                     'required_run_rate': required_rr,
                     'wickets_left': st.session_state.wickets_left,
                     'run_rate_diff': current_rr - required_rr,
-                    'is_home_team': 1 if st.session_state.batting_team == home_team_map.get(st.session_state.selected_city) else 0
                 }])
                 
                 win_prob = predict_probability(current_state_df)
