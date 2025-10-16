@@ -26,20 +26,29 @@ def load_data():
         st.error("Required data files not found. Ensure 'matches.csv' and 'smart_start_lookup.csv' are in your repository.")
         return None, None
 
-    # Data Cleaning
+    # Definitive Data Cleaning
     team_name_mapping = {
         'Delhi Daredevils': 'Delhi Capitals', 'Kings XI Punjab': 'Punjab Kings',
         'Deccan Chargers': 'Sunrisers Hyderabad', 'Rising Pune Supergiant': 'Rising Pune Supergiants',
         'Royal Challengers Bengaluru': 'Royal Challengers Bangalore'
     }
     venue_mapping = {
-        'M.Chinnaswamy Stadium': 'M Chinnaswamy Stadium', 'M Chinnaswamy Stadium, Bengaluru': 'M Chinnaswamy Stadium',
-        'Punjab Cricket Association Stadium, Mohali': 'Punjab Cricket Association IS Bindra Stadium', 'Punjab Cricket Association IS Bindra Stadium, Mohali': 'Punjab Cricket Association IS Bindra Stadium',
-        'Feroz Shah Kotla': 'Arun Jaitley Stadium', 'Arun Jaitley Stadium, Delhi': 'Arun Jaitley Stadium', 'Wankhede Stadium, Mumbai': 'Wankhede Stadium',
-        'Brabourne Stadium, Mumbai': 'Brabourne Stadium', 'Dr DY Patil Sports Academy, Mumbai': 'Dr DY Patil Sports Academy',
-        'Eden Gardens, Kolkata': 'Eden Gardens', 'Sawai Mansingh Stadium, Jaipur': 'Sawai Mansingh Stadium',
-        'Rajiv Gandhi International Stadium': 'Rajiv Gandhi International Stadium, Uppal', 'MA Chidambaram Stadium, Chepauk': 'MA Chidambaram Stadium',
-        'MA Chidambaram Stadium, Chepauk, Chennai': 'MA Chidambaram Stadium', 'Sardar Patel Stadium, Motera': 'Narendra Modi Stadium',
+        'M.Chinnaswamy Stadium': 'M Chinnaswamy Stadium', 
+        'M Chinnaswamy Stadium, Bengaluru': 'M Chinnaswamy Stadium',
+        'Punjab Cricket Association Stadium, Mohali': 'Punjab Cricket Association IS Bindra Stadium', 
+        'Punjab Cricket Association IS Bindra Stadium, Mohali': 'Punjab Cricket Association IS Bindra Stadium',
+        'Feroz Shah Kotla': 'Arun Jaitley Stadium', 
+        'Arun Jaitley Stadium, Delhi': 'Arun Jaitley Stadium',
+        'Wankhede Stadium, Mumbai': 'Wankhede Stadium',
+        'Brabourne Stadium, Mumbai': 'Brabourne Stadium', 
+        'Dr DY Patil Sports Academy, Mumbai': 'Dr DY Patil Sports Academy',
+        'Eden Gardens, Kolkata': 'Eden Gardens',
+        'Sawai Mansingh Stadium, Jaipur': 'Sawai Mansingh Stadium',
+        'Rajiv Gandhi International Stadium': 'Rajiv Gandhi International Stadium, Uppal',
+        'Rajiv Gandhi International Stadium, Uppal, Hyderabad': 'Rajiv Gandhi International Stadium, Uppal',
+        'MA Chidambaram Stadium, Chepauk': 'MA Chidambaram Stadium',
+        'MA Chidambaram Stadium, Chepauk, Chennai': 'MA Chidambaram Stadium',
+        'Sardar Patel Stadium, Motera': 'Narendra Modi Stadium',
         'Narendra Modi Stadium, Ahmedabad': 'Narendra Modi Stadium'
     }
     city_mapping = {'Bangalore': 'Bengaluru'}
@@ -136,9 +145,8 @@ with st.sidebar:
         labels = ['<140', '140-159', '160-179', '180-199', '200-219', '>220']
         target_bin = pd.cut([target_runs], bins=bins, labels=labels)[0]
         
-        initial_prob = 0.50 # Default fallback
+        initial_prob = 0.50
         
-        # 1. Try for the most specific case: venue, matchup, and target
         prob_row = smart_start_lookup[
             (smart_start_lookup['venue'] == venue) &
             (smart_start_lookup['batting_team'] == batting_team) &
@@ -148,7 +156,6 @@ with st.sidebar:
         if not prob_row.empty:
             initial_prob = prob_row['chase_win'].values[0]
         else:
-            # 2. Fallback: If specific matchup not found, use venue and target bin
             prob_row_fallback = smart_start_lookup[
                 (smart_start_lookup['venue'] == venue) &
                 (smart_start_lookup['target_bin'] == target_bin)
@@ -160,7 +167,7 @@ with st.sidebar:
         st.session_state.overs_history = [0.0]
 
 if 'simulation_started' in st.session_state and st.session_state.simulation_started:
-    # ... (The rest of your UI code for displaying metrics, expanders, and plots remains the same) ...
+    # ... (The rest of your UI code remains the same) ...
     st.header("Current Match State")
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Target", st.session_state.target)
