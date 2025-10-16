@@ -213,7 +213,7 @@ if 'simulation_started' in st.session_state and st.session_state.simulation_star
             if st.session_state.wickets_left <= 0 or st.session_state.runs_left <= 0 or st.session_state.balls_so_far >= 120:
                 st.warning("Match is over! Please reset the simulation to start a new one.")
             else:
-                st.session_state.runs_left -= runs_scored
+                st.session_state.runs_left = max(0, st.session_state.runs_left - runs_scored)
                 st.session_state.balls_so_far += 1
                 if is_wicket:
                     st.session_state.wickets_left -= 1
