@@ -49,7 +49,7 @@ def load_data():
     for col in ['team1', 'team2', 'toss_winner', 'winner']:
         matches[col] = matches[col].replace(team_name_mapping)
     matches['venue'] = matches['venue'].replace(venue_mapping)
-    matches['city'] = matches['city'].replace(city_mapping)
+    matches['city'] = matches[city].replace(city_mapping)
 
     return matches
 
@@ -67,13 +67,18 @@ all_venues = sorted(matches_df['venue'].dropna().unique())
 venue_encoding = {venue: i for i, venue in enumerate(all_venues)}
 home_team_map = matches_df.groupby('city')['team1'].agg(lambda x: x.value_counts().index[0]).to_dict()
 
-# --- Prediction Function with Confidence Adjustment and Initial Blending ---
+# --- Prediction Function with Adjustments and Smart Grace Period ---
 def predict_probability(state_df):
-    """Predicts win probability with adjustments for low-wickets and initial over volatility."""
+    """Predicts win probability with a smart grace period for the first over."""
+    balls_so_far = state_df['balls_so_far'].iloc[0]
+
+    # Use the smart, heuristic-based probability for the first over
+    if balls_so_far <= 6:
+        return st.session_state.initial_prob
+    
     wickets_left = state_df['wickets_left'].iloc[0]
     runs_left = state_df['runs_left'].iloc[0]
     balls_left = state_df['balls_left'].iloc[0]
-    balls_so_far = state_df['balls_so_far'].iloc[0]
     
     # 1. Hard Rules for Game Over
     if runs_left <= 0: return 1.0
@@ -104,18 +109,13 @@ def predict_probability(state_df):
         final_prob = raw_prob * multiplier
     else:
         final_prob = raw_prob
-
-    # 4. Blend the probability during the first over for stability
-    if balls_so_far < 6:
-        blending_factor = (6 - balls_so_far) / 6.0
-        final_prob = (blending_factor * 0.5) + ((1 - blending_factor) * final_prob)
         
     return final_prob
 
 # --- UI Layout ---
 st.set_page_config(page_title="IPL Live Win Predictor", page_icon="🏏", layout="wide")
 st.title("🏏 IPL Live Match Win Predictor")
-st.markdown("A 50/50 starting probability that transitions to a powerful, in-game prediction model.")
+st.markdown("A stable, target-sensitive starting probability that transitions to a powerful in-game model.")
 
 with st.sidebar:
     st.header("⚙️ Match Setup")
@@ -138,7 +138,19 @@ with st.sidebar:
         st.session_state.bowling_team = bowling_team
         st.session_state.venue = venue
         st.session_state.selected_city = selected_city
-        initial_prob = 0.5
+
+        # --- THE BETTER WAY: Calculate a target-sensitive initial probability ---
+        par_score = 175  # A baseline score for a 50/50 chance
+        score_diff = par_score - target_runs
+        
+        # Adjust probability by 0.75% for every run different from the par score
+        adjustment = score_diff * 0.0075 
+        initial_prob = 0.5 + adjustment
+        
+        # Clip the probability to be within a reasonable range (e.g., 10% to 90%)
+        initial_prob = np.clip(initial_prob, 0.1, 0.9)
+        
+        st.session_state.initial_prob = initial_prob
         st.session_state.probabilities = [initial_prob]
         st.session_state.overs_history = [0.0]
         st.rerun()
@@ -211,8 +223,6 @@ if 'simulation_started' in st.session_state and st.session_state.simulation_star
                 current_rr = (runs_so_far * 6 / st.session_state.balls_so_far) if st.session_state.balls_so_far > 0 else 0
                 required_rr = (st.session_state.runs_left * 6 / balls_left) if balls_left > 0 else 0
                 
-                # --- THIS IS THE FIX ---
-                # Changed state__df to state_df
                 state_df = pd.DataFrame([{
                     'batting_team': team_encoding.get(st.session_state.batting_team),
                     'bowling_team': team_encoding.get(st.session_state.bowling_team),
@@ -253,3 +263,4 @@ if 'simulation_started' in st.session_state and st.session_state.simulation_star
             st.metric(label=f"**{st.session_state.batting_team}'s Current Win Probability**", value=f"{final_prob:.2f}%")
 else:
     st.info("Setup a match in the sidebar and click 'Start / Reset Simulation' to begin.")
+
