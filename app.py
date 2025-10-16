@@ -77,14 +77,16 @@ def predict_probability(match_state):
     df['phase_Middle'] = 1 if 6 < over <= 15 else 0
     df['phase_Death'] = 1 if over > 15 else 0
     df['wicket_pressure'] = df['required_run_rate'] * (11 - df['wickets_left'])
+    df['danger_index'] = df['required_run_rate'] / (df['wickets_left'] + 0.1)
     
     feature_order = [
         'batting_team', 'bowling_team', 'venue', 'balls_so_far', 'balls_left',
         'total_runs_so_far', 'runs_left', 'current_run_rate', 'required_run_rate',
         'wickets_left', 'run_rate_diff', 'is_home_team', 'phase_Middle', 
-        'phase_Death', 'wicket_pressure'
+        'phase_Death', 'wicket_pressure', 'danger_index'
     ]
     df = df[feature_order]
+    df.replace([np.inf, -np.inf], 999, inplace=True)
     
     return model.predict_proba(df)[0][1]
 
