@@ -42,7 +42,7 @@ def load_data():
         'Narendra Modi Stadium, Ahmedabad': 'Narendra Modi Stadium',
         'Rajiv Gandhi International Stadium, Uppal': 'Rajiv Gandhi International Stadium', 'Rajiv Gandhi International Stadium, Uppal, Hyderabad': 'Rajiv Gandhi International Stadium',
         'Zayed Cricket Stadium, Abu Dhabi': 'Zayed Cricket Stadium', 'Himachal Pradesh Cricket Association Stadium, Dharamsala': 'Himachal Pradesh Cricket Association Stadium',
-        'Maharashtra Cricket Association Stadium, Pune': 'Maharashtra Cricket Association Stadium', 'Dr. Y.S. Rajasekhara Reddy ACA-VDCA Cricket Stadium, Visakhapatnam': 'Dr. Y.S. Rajasekhara Reddy ACA-VDCA Cricket Stadium'
+        'Maharashtra Cricket Association Stadium, Pune': 'Maharashtra Cricket Association Stadium', 'Dr. Y.S. Rajasekhara Reddy ACA-VDCA Cricket Stadium, Visakhnam': 'Dr. Y.S. Rajasekhara Reddy ACA-VDCA Cricket Stadium'
     }
     city_mapping = {'Bangalore': 'Bengaluru'}
 
@@ -67,45 +67,49 @@ all_venues = sorted(matches_df['venue'].dropna().unique())
 venue_encoding = {venue: i for i, venue in enumerate(all_venues)}
 home_team_map = matches_df.groupby('city')['team1'].agg(lambda x: x.value_counts().index[0]).to_dict()
 
-# --- Prediction Function with Momentum-Adjusted Powerplay ---
+# --- Prediction Function with 2-Over Heuristic + 1-Over Blend ---
 def predict_probability(state_df):
-    """Predicts win probability using a momentum heuristic for the powerplay."""
+    """Predicts win probability using a 2-over heuristic & 1-over blend."""
     balls_so_far = state_df['balls_so_far'].iloc[0]
     wickets_left = state_df['wickets_left'].iloc[0]
     runs_left = state_df['runs_left'].iloc[0]
+    balls_left = state_df['balls_left'].iloc[0]
     
-    # --- The Definitive Fix: Momentum-Adjusted Powerplay ---
-    # Powerplay (first 6 overs, 36 balls)
-    if balls_so_far <= 36:
-        # Start with the base probability from the target
+    # Calculate RRR for the safety-net checks
+    required_rr = (runs_left * 6) / balls_left if balls_left > 0 else 999
+
+    # --- FIX: Restoring the original, clean safety-net rules ---
+    if runs_left <= 0:
+        return 1.0
+    if wickets_left <= 0 and runs_left > 0:
+        return 0.0
+    if balls_left <= 0 and runs_left > 0:
+        return 0.0
+    # We add 'balls_so_far > 1' to prevent the app from defaulting to 0.0 at the start
+    if required_rr > 40 and balls_so_far > 1: 
+        return 0.0
+    # --- End of safety-net rules ---
+
+    # --- 1. First 2 Overs (Balls 1-12): Use Momentum Heuristic ---
+    if balls_so_far <= 12:
         base_prob = st.session_state.initial_prob
-        
-        # Calculate momentum
-        par_run_rate = 9.0  # Aggressive par score for powerplay
+        par_run_rate = 9.0  # Par powerplay run rate
         par_score = (par_run_rate / 6) * balls_so_far
         runs_scored = st.session_state.target - runs_left
-        
-        # Calculate a run difference against the par score
-        run_diff = runs_scored - par_score
-        
-        # Heavily penalize for wickets lost in the powerplay
         wickets_fallen = 10 - wickets_left
+        
+        run_diff = runs_scored - par_score
         momentum_score = run_diff - (wickets_fallen * 15)
         
-        # Adjust the base probability based on momentum
-        momentum_adjustment = momentum_score * 0.005 # Adjust by 0.5% per momentum point
+        momentum_adjustment = momentum_score * 0.005
         live_prob = base_prob + momentum_adjustment
-        
-        # Clip to ensure probability stays within a sensible 5% - 95% range
         return np.clip(live_prob, 0.05, 0.95)
 
-    # --- After Powerplay: Use the full ML model ---
-    balls_left = state_df['balls_left'].iloc[0]
-    if runs_left <= 0: return 1.0
-    if wickets_left <= 0 or balls_left <= 0: return 0.0
-    
+    # --- 2. Get the ML Model's Prediction (for Over 3 onwards) ---
     predict_df = state_df.copy()
-    required_rr = predict_df['required_run_rate'].iloc[0]
+    
+    # Ensure the required_rr is in the dataframe for the model
+    predict_df['required_run_rate'] = required_rr
 
     # Calculate and moderate original features
     predict_df['wicket_pressure'] = required_rr * np.sqrt(11 - wickets_left)
@@ -138,13 +142,22 @@ def predict_probability(state_df):
         confidence_multipliers = {1: 0.5, 2: 0.75, 3: 0.9}
         multiplier = confidence_multipliers.get(wickets_left, 1.0)
         model_prob *= multiplier
-    
-    return model_prob
+
+    # --- 3. Transition (Over 3 / Balls 13-18): Blend Heuristic & Model ---
+    if 12 < balls_so_far <= 18:
+        heuristic_prob = st.session_state.probabilities[-1]
+        model_weight = (balls_so_far - 12) / 6.0
+        final_prob = ((1 - model_weight) * heuristic_prob) + (model_weight * model_prob)
+        return final_prob
+
+    # --- 4. Full Model Control (Over 4+ / Ball 19+): Use 100% ML Model ---
+    else:
+        return model_prob
 
 # --- UI Layout ---
 st.set_page_config(page_title="IPL Live Win Predictor", page_icon="🏏", layout="wide")
 st.title("🏏 IPL Live Match Win Predictor")
-st.markdown("A live, momentum-adjusted powerplay that transitions to a powerful in-game model.")
+st.markdown("A live powerplay model that smoothly transitions to a powerful in-game predictor.")
 
 with st.sidebar:
     st.header("⚙️ Match Setup")
