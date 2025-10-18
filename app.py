@@ -75,17 +75,15 @@ def predict_probability(state_df):
     runs_left = state_df['runs_left'].iloc[0]
     balls_left = state_df['balls_left'].iloc[0]
     
-    # Calculate RRR for the safety-net checks
     required_rr = (runs_left * 6) / balls_left if balls_left > 0 else 999
 
-    # --- FIX: Restoring the original, clean safety-net rules ---
+    # --- Safety-net rules ---
     if runs_left <= 0:
         return 1.0
     if wickets_left <= 0 and runs_left > 0:
         return 0.0
     if balls_left <= 0 and runs_left > 0:
         return 0.0
-    # We add 'balls_so_far > 1' to prevent the app from defaulting to 0.0 at the start
     if required_rr > 40 and balls_so_far > 1: 
         return 0.0
     # --- End of safety-net rules ---
@@ -93,7 +91,7 @@ def predict_probability(state_df):
     # --- 1. First 2 Overs (Balls 1-12): Use Momentum Heuristic ---
     if balls_so_far <= 12:
         base_prob = st.session_state.initial_prob
-        par_run_rate = 9.0  # Par powerplay run rate
+        par_run_rate = 9.0
         par_score = (par_run_rate / 6) * balls_so_far
         runs_scored = st.session_state.target - runs_left
         wickets_fallen = 10 - wickets_left
@@ -107,14 +105,12 @@ def predict_probability(state_df):
 
     # --- 2. Get the ML Model's Prediction (for Over 3 onwards) ---
     predict_df = state_df.copy()
-    
-    # Ensure the required_rr is in the dataframe for the model
     predict_df['required_run_rate'] = required_rr
 
-    # Calculate and moderate original features
-    predict_df['wicket_pressure'] = required_rr * np.sqrt(11 - wickets_left)
-    danger_val = required_rr / (wickets_left + 0.1)
-    predict_df['danger_index'] = np.sqrt(danger_val) if danger_val > 0 else 0
+    # --- THE FIX: Use the ORIGINAL feature formulas ---
+    # These are the features the model was trained on.
+    predict_df['wicket_pressure'] = required_rr * (11 - wickets_left)
+    predict_df['danger_index'] = required_rr / (wickets_left + 0.1)
     
     over = balls_so_far / 6
     predict_df['phase_Middle'] = 1 if 6 < over <= 15 else 0
