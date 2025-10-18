@@ -67,9 +67,9 @@ all_venues = sorted(matches_df['venue'].dropna().unique())
 venue_encoding = {venue: i for i, venue in enumerate(all_venues)}
 home_team_map = matches_df.groupby('city')['team1'].agg(lambda x: x.value_counts().index[0]).to_dict()
 
-# --- Prediction Function with 2-Over Heuristic + 1-Over Blend ---
+# --- Prediction Function with 1-Over Lock + 1-Over Blend ---
 def predict_probability(state_df):
-    """Predicts win probability using a 2-over heuristic & 1-over blend."""
+    """Predicts win probability using a 1-over lock & 1-over blend."""
     balls_so_far = state_df['balls_so_far'].iloc[0]
     wickets_left = state_df['wickets_left'].iloc[0]
     runs_left = state_df['runs_left'].iloc[0]
@@ -88,27 +88,15 @@ def predict_probability(state_df):
         return 0.0
     # --- End of safety-net rules ---
 
-    # --- 1. First 2 Overs (Balls 1-12): Use Momentum Heuristic ---
-    if balls_so_far <= 12:
-        base_prob = st.session_state.initial_prob
-        par_run_rate = 9.0
-        par_score = (par_run_rate / 6) * balls_so_far
-        runs_scored = st.session_state.target - runs_left
-        wickets_fallen = 10 - wickets_left
-        
-        run_diff = runs_scored - par_score
-        momentum_score = run_diff - (wickets_fallen * 15)
-        
-        momentum_adjustment = momentum_score * 0.005
-        live_prob = base_prob + momentum_adjustment
-        return np.clip(live_prob, 0.05, 0.95)
+    # --- 1. First Over (Balls 1-6): Lock to Initial Probability ---
+    if balls_so_far <= 6:
+        return st.session_state.initial_prob
 
-    # --- 2. Get the ML Model's Prediction (for Over 3 onwards) ---
+    # --- 2. Get the ML Model's Prediction (for Over 2 onwards) ---
     predict_df = state_df.copy()
     predict_df['required_run_rate'] = required_rr
 
-    # --- THE FIX: Use the ORIGINAL feature formulas ---
-    # These are the features the model was trained on.
+    # Use the ORIGINAL feature formulas, as the model was trained on them
     predict_df['wicket_pressure'] = required_rr * (11 - wickets_left)
     predict_df['danger_index'] = required_rr / (wickets_left + 0.1)
     
@@ -139,21 +127,25 @@ def predict_probability(state_df):
         multiplier = confidence_multipliers.get(wickets_left, 1.0)
         model_prob *= multiplier
 
-    # --- 3. Transition (Over 3 / Balls 13-18): Blend Heuristic & Model ---
-    if 12 < balls_so_far <= 18:
-        heuristic_prob = st.session_state.probabilities[-1]
-        model_weight = (balls_so_far - 12) / 6.0
-        final_prob = ((1 - model_weight) * heuristic_prob) + (model_weight * model_prob)
+    # --- 3. Transition (Over 2 / Balls 7-12): Blend Heuristic & Model ---
+    if 6 < balls_so_far <= 12:
+        # Get the stable starting prob
+        initial_prob = st.session_state.initial_prob
+        
+        # Calculate the blend weight. It increases from 1/6 to 6/6 (1.0)
+        model_weight = (balls_so_far - 6) / 6.0
+        
+        final_prob = ((1 - model_weight) * initial_prob) + (model_weight * model_prob)
         return final_prob
 
-    # --- 4. Full Model Control (Over 4+ / Ball 19+): Use 100% ML Model ---
+    # --- 4. Full Model Control (Over 3+ / Ball 13+): Use 100% ML Model ---
     else:
         return model_prob
 
 # --- UI Layout ---
 st.set_page_config(page_title="IPL Live Win Predictor", page_icon="🏏", layout="wide")
 st.title("🏏 IPL Live Match Win Predictor")
-st.markdown("A live powerplay model that smoothly transitions to a powerful in-game predictor.")
+st.markdown("A stable, target-sensitive start that smoothly transitions to a live in-game model.")
 
 with st.sidebar:
     st.header("⚙️ Match Setup")
