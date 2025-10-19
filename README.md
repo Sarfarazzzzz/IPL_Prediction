@@ -78,7 +78,7 @@ A Streamlit web application that predicts the live win probability for the chasi
     * Experimenting with different feature engineering or robust scaling techniques (applied consistently during training *and* prediction).
     * Incorporating more recent IPL seasons into the training data.
 * **Player-Specific Features:** Enhance the model by adding features related to the specific batsmen at the crease and the bowler.
-* **Initial Probability Refinement (Smart Stats):** Explore replacing or combining the current target-based heuristic for the initial probability (at Ball 0) with a lookup based on pre-computed historical win percentages for specific team matchups at the selected venue (using the `smart_stats_lookup` approach, generated from `matchup_odds.csv` via `precompute.py`). This could provide a more data-driven starting point before the chase begins.
+* **Initial Probability Refinement (Smart Stats):** Explore replacing or combining the current target-based heuristic for the initial probability (at Ball 0) with a lookup based on pre-computed historical win percentages for specific team matchups at the selected venue (using the `smart_stats_lookup.csv` approach. This could provide a more data-driven starting point before the chase begins.
 * **UI Enhancements:** Add more visualizations, potentially showing the impact of the next possible ball outcomes.
 * **Contextual Factors:** Consider incorporating factors like pitch conditions or weather.
 
