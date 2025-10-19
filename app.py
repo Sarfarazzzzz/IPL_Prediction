@@ -9,16 +9,15 @@ import numpy as np
 def load_model():
     """Loads the final, context-aware prediction model."""
     try:
-        # Use the specific model file uploaded
+        # --- Load the correct model file ---
         with open("xgb_model.pkl", "rb") as f:
             model = pickle.load(f)
-        # Verify model has predict_proba if it's a classifier
         if not hasattr(model, 'predict_proba'):
-            st.error("Loaded model object does not have 'predict_proba' method. Is it a classifier?")
+            st.error("Loaded model object does not have 'predict_proba' method.")
             return None
         return model
     except FileNotFoundError:
-        st.error("Model file 'xgb_model.pkl' not found.")
+        st.error("Model file 'xgb_model.pkl' not found. Ensure it is in the same directory.")
         return None
     except Exception as e:
         st.error(f"Error loading model: {e}")
@@ -32,7 +31,7 @@ def load_data():
         matches = pd.read_csv("matches.csv")
         required_cols = ['team1', 'team2', 'venue', 'city', 'winner', 'toss_winner']
         if not all(col in matches.columns for col in required_cols):
-             st.error(f"matches.csv is missing required columns. Need at least: {', '.join(required_cols)}")
+             st.error(f"matches.csv is missing required columns: {', '.join(required_cols)}")
              return None
     except FileNotFoundError:
         st.error("Required data file 'matches.csv' not found.")
@@ -147,83 +146,97 @@ def predict_probability(state_df):
     predict_df = state_df.copy()
     predict_df['required_run_rate'] = required_rr
 
-    # --- USE ORIGINAL FEATURES THE MODEL WAS TRAINED ON ---
+    # --- ADDING BACK ORIGINAL FEATURES AS PER TRAINING ---
     predict_df['wicket_pressure'] = required_rr * (11 - wickets_left)
-    predict_df['danger_index'] = required_rr / (wickets_left + 0.1) # Add epsilon here if needed during training too
+    predict_df['danger_index'] = required_rr / (wickets_left + 0.1)
 
     over = balls_so_far / 6
     predict_df['phase_Middle'] = 1 if 6 < over <= 15 else 0
     predict_df['phase_Death'] = 1 if over > 15 else 0
 
+    # --- ENSURE FEATURE ORDER MATCHES TRAINING ---
     feature_order = [
         'batting_team', 'bowling_team', 'venue', 'balls_so_far', 'balls_left',
         'total_runs_so_far', 'runs_left', 'current_run_rate', 'required_run_rate',
         'wickets_left', 'run_rate_diff', 'is_home_team', 'phase_Middle',
-        'phase_Death', 'wicket_pressure', 'danger_index' # These are back in
+        'phase_Death', 'wicket_pressure', 'danger_index' # Features included
     ]
 
     # Dynamically get feature names the loaded model expects
     try:
+        # Check standard attributes first
         if hasattr(model, 'get_booster') and callable(model.get_booster):
-            model_features = model.get_booster().feature_names
-        elif hasattr(model, 'feature_names_in_'):
+             model_features = model.get_booster().feature_names
+        elif hasattr(model, 'feature_names_in_'): # Scikit-learn wrapper
              model_features = model.feature_names_in_
         else:
-             st.warning("Cannot reliably determine model's expected features. Assuming 'feature_order'.")
+            # Fallback if names cannot be obtained: assume feature_order IS correct
+             st.warning("Cannot determine model's expected features. Assuming order from code.")
              model_features = feature_order
+             # Ensure the predict_df columns match this assumed order EXACTLY
+             predict_df = predict_df[feature_order] # Reorder/select columns
     except Exception as e:
-         st.error(f"Error getting model features: {e}. Assuming 'feature_order'.")
+         st.error(f"Error getting model features: {e}. Assuming order from code.")
          model_features = feature_order
+         predict_df = predict_df[feature_order] # Reorder/select columns
 
-    final_predict_df = pd.DataFrame(columns=model_features) # Empty DF with correct columns
+    # If model_features were determined dynamically, select/reorder columns in predict_df
+    # This ensures consistency even if the dynamic check failed and we used feature_order
+    final_predict_df = pd.DataFrame(columns=model_features) # Start with correct columns
 
-    # Populate DF only with features the model knows and are available
     missing_from_state = []
+    present_cols = {}
     for col in model_features:
         if col in predict_df.columns:
-            # Assign value, handling potential Series vs single value issues
-             val = predict_df[col]
-             final_predict_df[col] = val.iloc[0] if isinstance(val, pd.Series) else val
+             # Get the single value for the current state
+             val = predict_df[col].iloc[0] if isinstance(predict_df[col], pd.Series) else predict_df[col]
+             present_cols[col] = [val] # Put it in a list for DataFrame creation
         else:
             missing_from_state.append(col)
-            final_predict_df[col] = 0 # Fill missing expected columns with 0
+            present_cols[col] = [0] # Fill missing expected columns with 0
+
+    # Create the DataFrame with exactly one row
+    final_predict_df = pd.DataFrame(present_cols, columns=model_features) # Ensure column order
 
     # if missing_from_state:
     #      st.warning(f"Model expected features not in state: {missing_from_state}. Filled with 0.")
 
     final_predict_df.replace([np.inf, -np.inf], 999, inplace=True)
-    # Convert types just before prediction for robustness
+    # Convert types just before prediction
     for col in final_predict_df.columns:
         try:
-             # Attempt conversion to numeric for relevant features
-             if col not in ['batting_team', 'bowling_team', 'venue']: # Exclude known categorical/encoded
+             # Convert numeric features to float
+             if col not in ['batting_team', 'bowling_team', 'venue']: # Keep encoded features as they are (likely int/float already)
+                 # Use pd.to_numeric for robust conversion, coerce errors to NaN
                  final_predict_df[col] = pd.to_numeric(final_predict_df[col], errors='coerce')
-        except Exception:
-             pass # Ignore errors if conversion isn't possible
-    final_predict_df = final_predict_df.fillna(0) # Fill NaNs potentially created by coerce
+        except Exception: pass # Ignore errors silently
+    final_predict_df = final_predict_df.fillna(0) # Fill NaNs from coerce or original NaNs
 
 
     # Make prediction
     try:
         if len(final_predict_df) == 1:
-            # Check for NaNs again after type conversion attempt
             if final_predict_df.isnull().values.any():
-                 st.warning("NaN values detected before prediction after type conversion. Filling with 0.")
+                 st.warning("NaNs detected before prediction after type conversion. Filling.")
                  final_predict_df = final_predict_df.fillna(0)
+            # Ensure dtypes match common expectation (float32 often used by XGBoost)
+            # final_predict_df = final_predict_df.astype(np.float32, errors='ignore') # Optional: Force type if needed
+
             model_prob = model.predict_proba(final_predict_df)[0][1]
         else:
-            st.warning(f"Prediction DataFrame had {len(final_predict_df)} rows. Expected 1. Using fallback.")
-            model_prob = 0.5 # Fallback
+            st.warning(f"Prediction DF had {len(final_predict_df)} rows. Fallback.")
+            model_prob = 0.5
     except ValueError as ve:
-         st.error(f"ValueError during prediction: {ve}. Model might expect different features/types.")
-         st.write("Columns Sent:", final_predict_df.columns)
+         st.error(f"ValueError: {ve}. Model features/types mismatch?")
+         st.write("Model Expected:", model_features)
+         st.write("Columns Sent:", final_predict_df.columns.tolist())
          st.write("Data Sent (dtypes):", final_predict_df.dtypes)
          st.write("Data Sent (head):", final_predict_df.head())
-         model_prob = 0.5 # Fallback
+         model_prob = 0.5
     except Exception as e:
-         st.error(f"Unexpected error during prediction: {e}")
+         st.error(f"Prediction Error: {e}")
          st.write("Data Sent (head):", final_predict_df.head())
-         model_prob = 0.5 # Fallback
+         model_prob = 0.5
 
 
     # Apply Confidence Multiplier
@@ -235,15 +248,15 @@ def predict_probability(state_df):
     # --- 2. Transition (Overs 1-2 / Balls 1-12): Blend Heuristic & Model ---
     if balls_so_far <= 12:
         initial_prob = st.session_state.get('initial_prob', 0.5)
-        model_weight = max(0, balls_so_far) / 12.0 # Blend weight 0 to 1
+        model_weight = max(0, balls_so_far) / 12.0
 
         final_prob = ((1 - model_weight) * initial_prob) + (model_weight * model_prob)
-        return np.clip(final_prob, 0.01, 0.99) # Clip during blend
+        return np.clip(final_prob, 0.01, 0.99)
 
 
     # --- 3. Full Model Control (Over 3+ / Ball 13+): Use 100% ML Model ---
     else:
-        return np.clip(model_prob, 0.01, 0.99) # Clip after blend
+        return np.clip(model_prob, 0.01, 0.99)
 
 
 # --- UI Layout ---
@@ -503,3 +516,4 @@ if st.session_state.get('simulation_started', False):
 
 elif not st.session_state.get('simulation_started', False):
     st.info("Setup a match in the sidebar and click 'Start / Reset Simulation' to begin.")
+
