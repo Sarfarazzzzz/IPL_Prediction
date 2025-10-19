@@ -10,7 +10,7 @@ def load_model():
     """Loads the final, context-aware prediction model."""
     try:
         # Use the specific model file uploaded
-        with open("xgb_model (1).pkl", "rb") as f:
+        with open("xgb_model.pkl", "rb") as f:
             model = pickle.load(f)
         # Verify model has predict_proba if it's a classifier
         if not hasattr(model, 'predict_proba'):
@@ -18,7 +18,7 @@ def load_model():
             return None
         return model
     except FileNotFoundError:
-        st.error("Model file 'xgb_model (1).pkl' not found.")
+        st.error("Model file 'xgb_model.pkl' not found.")
         return None
     except Exception as e:
         st.error(f"Error loading model: {e}")
