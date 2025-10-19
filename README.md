@@ -69,7 +69,7 @@ A Streamlit web application that predicts the live win probability for the chasi
     * `matches.csv`
     * `xgb_model.pkl`
     * `requirements.txt`
-    * (Optional: `deliveries.csv` and `ipl_inplay_prediction (3).ipynb` for reference/retraining)
+    * (Optional: `deliveries.csv` and `ipl_inplay_prediction.ipynb` for reference/retraining)
 4.  **Run the Streamlit app:**
     ```bash
     streamlit run app.py
