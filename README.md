@@ -66,7 +66,9 @@ A Streamlit web application that predicts the live win probability for the chasi
     streamlit run app.py
     ```
 5.  **Use the app:** Open the provided URL. Set up the match in the sidebar, click "Start / Reset Simulation", and input ball-by-ball details.
-
+    ```bash
+    https://iplprediction-tywz8ytnoa5carjvxla3w6.streamlit.app/
+    ```
 ---
 
 ## 🌱 Future Work & Potential Improvements
