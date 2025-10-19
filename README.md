@@ -16,6 +16,15 @@ A Streamlit web application that predicts the live win probability for the chasi
 
 ---
 
+## 🚀 Technology Stack
+
+* **Model Training**: Scikit-learn, Pandas, Numpy, XGBoost
+* **Web Application**: Streamlit
+* **Data Visualization**: Matplotlib
+* **Core Python**: Pickle (for model serialization)
+
+---
+
 ## ⚙️ How it Works
 
 1.  **Initial Probability (Ball 0):** A starting win probability is calculated based on the target score relative to a par score (175).
